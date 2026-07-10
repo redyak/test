@@ -68,12 +68,10 @@ secondaryCubeGroup.add(secondaryOutline);
 cubeGroup.add(secondaryCubeGroup);
 
 // Create dotted lines from top cube corners to bottom cube bottom
-const dottedMaterial = new THREE.LineDashedMaterial({
+const dottedMaterial = new THREE.LineBasicMaterial({
   color: 0x6ea8ff,
   transparent: true,
-  opacity: 0.4,
-  dashSize: 0.3,
-  gapSize: 0.2
+  opacity: 0.4
 });
 
 const topCubeCorners = [
@@ -91,9 +89,8 @@ topCubeCorners.forEach(corner => {
     topPos.x, topPos.y, topPos.z,
     bottomPos.x, bottomPos.y, bottomPos.z
   ]), 3));
-  geometry.computeLineDistances();
   
-  const line = new THREE.Line(geometry, dottedMaterial);
+  const line = new THREE.LineSegments(geometry, dottedMaterial);
   cubeGroup.add(line);
 });
 

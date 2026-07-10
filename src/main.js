@@ -3,6 +3,12 @@ import * as THREE from 'three';
 const canvas = document.getElementById('game');
 const scoreEl = document.getElementById('score');
 
+// Helper to display errors on-screen
+function setError(msg) {
+  if (scoreEl) scoreEl.textContent = 'ERROR: ' + msg;
+  console.error(msg);
+}
+
 try {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#040816');
@@ -50,29 +56,104 @@ const outline = new THREE.LineSegments(
 );
 cubeGroup.add(outline);
 
-const secondaryCubeGroup = new THREE.Group();
-secondaryCubeGroup.position.set(0, 4, 0);
+// Multi-cube spawner: allow multiple falling items and occupancy-aware landing
+const fallingCubes = [];
+const smallHalf = 1; // half-size of the small cube (2x2x2)
 
-const secondaryCube = new THREE.Mesh(
-  new THREE.BoxGeometry(2, 2, 2),
-  new THREE.MeshStandardMaterial({
-    color: 0x8fe8ff,
-    emissive: 0x144b7a,
-    emissiveIntensity: 0.45,
-    roughness: 0.2,
-    metalness: 0.3
-  })
-);
-secondaryCubeGroup.add(secondaryCube);
+const fallPathMaterial = new THREE.LineDashedMaterial({
+  color: 0xffff66,
+  dashSize: 0.5,
+  gapSize: 0.15,
+  transparent: true,
+  opacity: 1,
+  depthTest: false
+});
 
-const secondaryOutline = new THREE.LineSegments(
-  new THREE.EdgesGeometry(new THREE.BoxGeometry(2, 2, 2)),
-  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 })
-);
-secondaryCubeGroup.add(secondaryOutline);
+// Initialize occupancy grid BEFORE spawning
+const occupancy = Array.from({ length: 6 }, () => Array(6).fill(0));
+const gridCenters = Array.from({ length: 6 }, (_, i) => -cubeHalfSize + 0.5 + i);
 
-cubeGroup.add(secondaryCubeGroup);
+function footprintIndicesAt(objX, objZ, objHalf) {
+  const cols = [];
+  for (let i = 0; i < 6; i++) {
+    const cx = gridCenters[i];
+    if (cx >= objX - objHalf && cx < objX + objHalf) {
+      for (let j = 0; j < 6; j++) {
+        const cz = gridCenters[j];
+        if (cz >= objZ - objHalf && cz < objZ + objHalf) {
+          cols.push([i, j]);
+        }
+      }
+    }
+  }
+  return cols;
+}
 
+function computeTargetYFor(objX, objZ, objHalf, objHeight) {
+  const cols = footprintIndicesAt(objX, objZ, objHalf);
+  let maxLayer = 0;
+  if (cols.length === 0) return -cubeHalfSize + objHeight / 2;
+  cols.forEach(([i, j]) => {
+    if (occupancy[i][j] > maxLayer) maxLayer = occupancy[i][j];
+  });
+  return -cubeHalfSize + objHeight / 2 + maxLayer;
+}
+
+function spawnFallingCube(x = 0, z = 0) {
+  const group = new THREE.Group();
+  const startY = cubeHalfSize + 2; // spawn above the large cube
+  group.position.set(x, startY, z);
+
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(2, 2, 2),
+    new THREE.MeshStandardMaterial({
+      color: 0x8fe8ff,
+      emissive: 0x144b7a,
+      emissiveIntensity: 0.45,
+      roughness: 0.2,
+      metalness: 0.3
+    })
+  );
+  group.add(mesh);
+
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(2, 2, 2)),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 })
+  );
+  group.add(outline);
+
+  cubeGroup.add(group);
+
+  // Compute target landing Y based on current occupancy
+  const objHalf = smallHalf;
+  const objHeight = 2;
+  const targetY = computeTargetYFor(x, z, objHalf, objHeight);
+
+  // create four dashed corner path lines
+  const cornerOffsets = [
+    { x: smallHalf, z: smallHalf },
+    { x: smallHalf, z: -smallHalf },
+    { x: -smallHalf, z: smallHalf },
+    { x: -smallHalf, z: -smallHalf }
+  ];
+  const pathLines = cornerOffsets.map((off) => {
+    const start = new THREE.Vector3(off.x, group.position.y - smallHalf, off.z);
+    const end = new THREE.Vector3(off.x, targetY - smallHalf, off.z);
+    const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
+    const line = new THREE.Line(geom, fallPathMaterial);
+    line.computeLineDistances?.();
+    line.renderOrder = 999;
+    cubeGroup.add(line);
+    return { line, off };
+  });
+
+  const obj = { group, mesh, pathLines, landed: false };
+  fallingCubes.push(obj);
+  return obj;
+}
+
+// start with one falling cube
+spawnFallingCube(0, 0);
 const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.18 });
 const gridSize = 6;
 const gridDivisions = 6;
@@ -93,34 +174,6 @@ grids.forEach((grid, index) => {
 // Falling animation
 let isFalling = true;
 const fallSpeed = 0.02;
-const landingY = -cubeHalfSize + 1; // Bottom of large cube plus half the small cube height
-
-// Create dashed path lines from each bottom corner of the small cube down to the landing Y
-const smallHalf = 1; // half-size of the small cube (2x2x2)
-const cornerOffsets = [
-  { x: smallHalf, z: smallHalf },
-  { x: smallHalf, z: -smallHalf },
-  { x: -smallHalf, z: smallHalf },
-  { x: -smallHalf, z: -smallHalf }
-];
-const fallPathMaterial = new THREE.LineDashedMaterial({
-  color: 0xffff66,
-  dashSize: 0.5,
-  gapSize: 0.15,
-  transparent: true,
-  opacity: 1,
-  depthTest: false
-});
-const fallPathLines = cornerOffsets.map((off) => {
-  const start = new THREE.Vector3(off.x, secondaryCubeGroup.position.y - smallHalf, off.z);
-  const end = new THREE.Vector3(off.x, landingY, off.z);
-  const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
-  const line = new THREE.Line(geom, fallPathMaterial);
-  line.computeLineDistances?.();
-  line.renderOrder = 999;
-  cubeGroup.add(line);
-  return { line, off };
-});
 
 let isDragging = false;
 let lastX = 0;
@@ -152,20 +205,38 @@ renderer.domElement.addEventListener('pointerleave', stopDragging);
 function animate() {
   requestAnimationFrame(animate);
   
-  // Animate small cube falling
-  if (isFalling && secondaryCubeGroup.position.y > landingY) {
-    secondaryCubeGroup.position.y -= fallSpeed;
-  } else if (isFalling) {
-    isFalling = false;
-  }
+  // Animate all falling cubes with occupancy-aware landing
+  for (let idx = 0; idx < fallingCubes.length; idx++) {
+    const c = fallingCubes[idx];
+    if (c.landed) continue;
+    const objX = c.group.position.x;
+    const objZ = c.group.position.z;
+    const objHalf = smallHalf;
+    const objHeight = 2;
+    const targetY = computeTargetYFor(objX, objZ, objHalf, objHeight);
 
-  // Update each corner path to follow the falling cube's bottom corners
-  fallPathLines.forEach(({ line, off }) => {
-    const start = new THREE.Vector3(off.x, secondaryCubeGroup.position.y - smallHalf, off.z);
-    const end = new THREE.Vector3(off.x, landingY, off.z);
-    line.geometry.setFromPoints([start, end]);
-    line.computeLineDistances?.();
-  });
+    if (c.group.position.y > targetY) {
+      c.group.position.y -= fallSpeed;
+    } else {
+      // land: snap to target and update occupancy
+      c.group.position.y = targetY;
+      c.landed = true;
+      const cols = footprintIndicesAt(objX, objZ, objHalf);
+      cols.forEach(([i, j]) => {
+        occupancy[i][j] += objHeight; // mark occupied by the full object height (2)
+      });
+      // spawn next cube after this one lands
+      spawnFallingCube(0, 0);
+    }
+
+    // Update each corner path to follow the falling cube's bottom corners
+    c.pathLines.forEach(({ line, off }) => {
+      const start = new THREE.Vector3(off.x, c.group.position.y - smallHalf, off.z);
+      const end = new THREE.Vector3(off.x, targetY - smallHalf, off.z);
+      line.geometry.setFromPoints([start, end]);
+      line.computeLineDistances?.();
+    });
+  }
   
   renderer.render(scene, camera);
 }
@@ -179,7 +250,10 @@ window.addEventListener('resize', () => {
   scoreEl.textContent = 'Cube falling...';
   animate();
 } catch (err) {
-  console.error('Initialization error:', err);
-  if (scoreEl) scoreEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
-  throw err;
+  const errMsg = err && err.message ? err.message : String(err);
+  setError(errMsg);
 }
+
+// Debug: expose occupancy to window for quick inspection
+window.__occupancy = occupancy;
+window.__fallingCubes = fallingCubes;

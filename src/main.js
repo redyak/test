@@ -8,7 +8,7 @@ scene.background = new THREE.Color('#040816');
 scene.fog = new THREE.Fog('#040816', 10, 30);
 
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 5, 12);
+camera.position.set(15, 10, 15);
 camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -91,7 +91,7 @@ grids.forEach((grid, index) => {
 
 // Falling animation
 let isFalling = true;
-const fallSpeed = 0.05;
+const fallSpeed = 0.02;
 const landingY = -cubeHalfSize + 1; // Bottom of large cube plus half the small cube height
 
 let isDragging = false;

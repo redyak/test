@@ -32,15 +32,17 @@ const cube = new THREE.Mesh(
     color: 0x6ea8ff,
     emissive: 0x103a71,
     emissiveIntensity: 0.35,
-    roughness: 0.25,
-    metalness: 0.25
+    roughness: 0.4,
+    metalness: 0.1,
+    transparent: true,
+    opacity: 0.15
   })
 );
 cubeGroup.add(cube);
 
 const outline = new THREE.LineSegments(
   new THREE.EdgesGeometry(new THREE.BoxGeometry(5, 5, 5)),
-  new THREE.LineBasicMaterial({ color: 0x8fe8ff, transparent: true, opacity: 0.5 })
+  new THREE.LineBasicMaterial({ color: 0x8fe8ff, transparent: true, opacity: 0.6 })
 );
 cubeGroup.add(outline);
 
@@ -67,40 +69,11 @@ secondaryCubeGroup.add(secondaryOutline);
 
 cubeGroup.add(secondaryCubeGroup);
 
-// Create dotted lines from top cube corners to bottom cube bottom
-const dottedMaterial = new THREE.LineBasicMaterial({
-  color: 0x6ea8ff,
-  transparent: true,
-  opacity: 0.4
-});
-
-const topCubeCorners = [
-  [1, 1, 1],
-  [-1, 1, 1],
-  [-1, 1, -1],
-  [1, 1, -1]
-];
-
-topCubeCorners.forEach(corner => {
-  const geometry = new THREE.BufferGeometry();
-  const topPos = new THREE.Vector3(corner[0], 4 + corner[1], corner[2]);
-  const bottomPos = new THREE.Vector3(corner[0], -2.5, corner[2]);
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-    topPos.x, topPos.y, topPos.z,
-    bottomPos.x, bottomPos.y, bottomPos.z
-  ]), 3));
-  
-  const line = new THREE.LineSegments(geometry, dottedMaterial);
-  cubeGroup.add(line);
-});
-
 const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.18 });
 const gridSize = 6;
 const gridDivisions = 6;
 
 const grids = [
-  new THREE.GridHelper(gridSize, gridDivisions, 0x7fe3ff, 0x7fe3ff),
-  new THREE.GridHelper(gridSize, gridDivisions, 0x7fe3ff, 0x7fe3ff),
   new THREE.GridHelper(gridSize, gridDivisions, 0x7fe3ff, 0x7fe3ff)
 ];
 
@@ -110,14 +83,13 @@ grids.forEach((grid, index) => {
   grid.material.opacity = 0.16;
   grid.material.transparent = true;
 
-  if (index === 1) {
-    grid.rotation.x = Math.PI / 2;
-  } else if (index === 2) {
-    grid.rotation.z = Math.PI / 2;
-  }
-
   cubeGroup.add(grid);
 });
+
+// Falling animation
+let isFalling = true;
+const fallSpeed = 0.05;
+const landingY = -2.5 + 1; // Bottom of large cube (y=-2.5) plus half height of small cube (h=1)
 
 let isDragging = false;
 let lastX = 0;
@@ -148,6 +120,14 @@ renderer.domElement.addEventListener('pointerleave', stopDragging);
 
 function animate() {
   requestAnimationFrame(animate);
+  
+  // Animate small cube falling
+  if (isFalling && secondaryCubeGroup.position.y > landingY) {
+    secondaryCubeGroup.position.y -= fallSpeed;
+  } else if (isFalling) {
+    isFalling = false;
+  }
+  
   renderer.render(scene, camera);
 }
 
@@ -157,5 +137,5 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-scoreEl.textContent = 'Drag left / right';
+scoreEl.textContent = 'Cube falling...';
 animate();

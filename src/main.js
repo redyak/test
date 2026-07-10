@@ -26,8 +26,11 @@ scene.add(directionalLight);
 const cubeGroup = new THREE.Group();
 scene.add(cubeGroup);
 
+const cubeSize = 6;
+const cubeHalfSize = cubeSize / 2;
+
 const cube = new THREE.Mesh(
-  new THREE.BoxGeometry(5, 5, 5),
+  new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize),
   new THREE.MeshStandardMaterial({
     color: 0x6ea8ff,
     emissive: 0x103a71,
@@ -41,7 +44,7 @@ const cube = new THREE.Mesh(
 cubeGroup.add(cube);
 
 const outline = new THREE.LineSegments(
-  new THREE.EdgesGeometry(new THREE.BoxGeometry(5, 5, 5)),
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize)),
   new THREE.LineBasicMaterial({ color: 0x8fe8ff, transparent: true, opacity: 0.6 })
 );
 cubeGroup.add(outline);
@@ -89,7 +92,7 @@ grids.forEach((grid, index) => {
 // Falling animation
 let isFalling = true;
 const fallSpeed = 0.05;
-const landingY = -2.5 + 1; // Bottom of large cube (y=-2.5) plus half height of small cube (h=1)
+const landingY = -cubeHalfSize + 1; // Bottom of large cube plus half the small cube height
 
 let isDragging = false;
 let lastX = 0;

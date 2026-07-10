@@ -3,9 +3,10 @@ import * as THREE from 'three';
 const canvas = document.getElementById('game');
 const scoreEl = document.getElementById('score');
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color('#040816');
-scene.fog = new THREE.Fog('#040816', 10, 30);
+try {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#040816');
+  scene.fog = new THREE.Fog('#040816', 10, 30);
 
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.set(15, 10, 15);
@@ -94,6 +95,33 @@ let isFalling = true;
 const fallSpeed = 0.02;
 const landingY = -cubeHalfSize + 1; // Bottom of large cube plus half the small cube height
 
+// Create dashed path lines from each bottom corner of the small cube down to the landing Y
+const smallHalf = 1; // half-size of the small cube (2x2x2)
+const cornerOffsets = [
+  { x: smallHalf, z: smallHalf },
+  { x: smallHalf, z: -smallHalf },
+  { x: -smallHalf, z: smallHalf },
+  { x: -smallHalf, z: -smallHalf }
+];
+const fallPathMaterial = new THREE.LineDashedMaterial({
+  color: 0xffff66,
+  dashSize: 0.5,
+  gapSize: 0.15,
+  transparent: true,
+  opacity: 1,
+  depthTest: false
+});
+const fallPathLines = cornerOffsets.map((off) => {
+  const start = new THREE.Vector3(off.x, secondaryCubeGroup.position.y - smallHalf, off.z);
+  const end = new THREE.Vector3(off.x, landingY, off.z);
+  const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
+  const line = new THREE.Line(geom, fallPathMaterial);
+  line.computeLineDistances?.();
+  line.renderOrder = 999;
+  cubeGroup.add(line);
+  return { line, off };
+});
+
 let isDragging = false;
 let lastX = 0;
 
@@ -130,6 +158,14 @@ function animate() {
   } else if (isFalling) {
     isFalling = false;
   }
+
+  // Update each corner path to follow the falling cube's bottom corners
+  fallPathLines.forEach(({ line, off }) => {
+    const start = new THREE.Vector3(off.x, secondaryCubeGroup.position.y - smallHalf, off.z);
+    const end = new THREE.Vector3(off.x, landingY, off.z);
+    line.geometry.setFromPoints([start, end]);
+    line.computeLineDistances?.();
+  });
   
   renderer.render(scene, camera);
 }
@@ -140,5 +176,10 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-scoreEl.textContent = 'Cube falling...';
-animate();
+  scoreEl.textContent = 'Cube falling...';
+  animate();
+} catch (err) {
+  console.error('Initialization error:', err);
+  if (scoreEl) scoreEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+  throw err;
+}

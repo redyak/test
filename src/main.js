@@ -45,7 +45,7 @@ const outline = new THREE.LineSegments(
 cubeGroup.add(outline);
 
 const secondaryCubeGroup = new THREE.Group();
-secondaryCubeGroup.position.set(0, 3.5, 0);
+secondaryCubeGroup.position.set(0, 4, 0);
 
 const secondaryCube = new THREE.Mesh(
   new THREE.BoxGeometry(2, 2, 2),
@@ -66,6 +66,36 @@ const secondaryOutline = new THREE.LineSegments(
 secondaryCubeGroup.add(secondaryOutline);
 
 cubeGroup.add(secondaryCubeGroup);
+
+// Create dotted lines from top cube corners to bottom cube bottom
+const dottedMaterial = new THREE.LineDashedMaterial({
+  color: 0x6ea8ff,
+  transparent: true,
+  opacity: 0.4,
+  dashSize: 0.3,
+  gapSize: 0.2
+});
+
+const topCubeCorners = [
+  [1, 1, 1],
+  [-1, 1, 1],
+  [-1, 1, -1],
+  [1, 1, -1]
+];
+
+topCubeCorners.forEach(corner => {
+  const geometry = new THREE.BufferGeometry();
+  const topPos = new THREE.Vector3(corner[0], 4 + corner[1], corner[2]);
+  const bottomPos = new THREE.Vector3(corner[0], -2.5, corner[2]);
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    topPos.x, topPos.y, topPos.z,
+    bottomPos.x, bottomPos.y, bottomPos.z
+  ]), 3));
+  geometry.computeLineDistances();
+  
+  const line = new THREE.LineSegments(geometry, dottedMaterial);
+  cubeGroup.add(line);
+});
 
 const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.18 });
 const gridSize = 6;

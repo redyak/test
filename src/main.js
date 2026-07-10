@@ -44,6 +44,29 @@ const outline = new THREE.LineSegments(
 );
 cubeGroup.add(outline);
 
+const secondaryCubeGroup = new THREE.Group();
+secondaryCubeGroup.position.set(0, 3.5, 0);
+
+const secondaryCube = new THREE.Mesh(
+  new THREE.BoxGeometry(2, 2, 2),
+  new THREE.MeshStandardMaterial({
+    color: 0x8fe8ff,
+    emissive: 0x144b7a,
+    emissiveIntensity: 0.45,
+    roughness: 0.2,
+    metalness: 0.3
+  })
+);
+secondaryCubeGroup.add(secondaryCube);
+
+const secondaryOutline = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(2, 2, 2)),
+  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 })
+);
+secondaryCubeGroup.add(secondaryOutline);
+
+cubeGroup.add(secondaryCubeGroup);
+
 const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.18 });
 const gridSize = 6;
 const gridDivisions = 6;

@@ -93,7 +93,7 @@ topCubeCorners.forEach(corner => {
   ]), 3));
   geometry.computeLineDistances();
   
-  const line = new THREE.LineSegments(geometry, dottedMaterial);
+  const line = new THREE.Line(geometry, dottedMaterial);
   cubeGroup.add(line);
 });
 

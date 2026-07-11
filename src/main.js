@@ -27,7 +27,7 @@ const SHAPES = [
     halfZ: 1.5,
     height: 1,
     color: 0xff8888
-  },
+  }/*,
   {
     name: 'lshape',
     geometry: createLShapeGeometry(),
@@ -35,7 +35,7 @@ const SHAPES = [
     halfZ: 1.0,
     height: 1,
     color: 0x88ff88
-  }
+  }*/
 ];
 
 // Helper to create L-shape (3x1 base + 1x1 attached)
@@ -297,7 +297,7 @@ try {
         fallingObjects = fallingObjects.filter(obj => obj !== c);
 
         // Spawn next object
-        if (spawnedCount < 10) spawnFallingObject(1, 0);
+        if (spawnedCount < 6) spawnFallingObject(1, 0);
       }
 
       // Update path lines

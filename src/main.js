@@ -142,25 +142,7 @@ function spawnFallingCube(x = 0, z = 0) {
   const objHeight = 2;
   const targetY = computeTargetYFor(x, z, objHalf, objHeight);
 
-  // create four dashed corner path lines
-  const cornerOffsets = [
-    { x: smallHalf, z: smallHalf },
-    { x: smallHalf, z: -smallHalf },
-    { x: -smallHalf, z: smallHalf },
-    { x: -smallHalf, z: -smallHalf }
-  ];
-  /*const pathLines = cornerOffsets.map((off) => {
-    const start = new THREE.Vector3(off.x, group.position.y - smallHalf, off.z);
-    const end = new THREE.Vector3(off.x, targetY - smallHalf, off.z);
-    const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
-    const line = new THREE.Line(geom, fallPathMaterial);
-    line.computeLineDistances?.();
-    line.renderOrder = 999;
-    cubeGroup.add(line);
-    return { line, off };
-  });*/
-
-// NEW: Dynamic bottom corners
+  // Dynamic bottom corners
   const bottomCornerOffsets = getBottomCornerOffsets(mesh);
   const pathLines = bottomCornerOffsets.map((offset) => {
   const start = new THREE.Vector3(
@@ -268,14 +250,7 @@ function animate() {
 
     }
 
-    // Update each corner path to follow the falling cube's bottom corners
-  /*  c.pathLines.forEach(({ line, off }) => {
-      const start = new THREE.Vector3(off.x, c.group.position.y - smallHalf, off.z);
-      const end = new THREE.Vector3(off.x, targetY - smallHalf, off.z);
-      line.geometry.setFromPoints([start, end]);
-      line.computeLineDistances?.();
-    });*/
-    // 3. Update animate loop
+    // Update each path to follow the falling cube's bottom corners
     c.pathLines.forEach(({ line, offset }) => {
       const start = new THREE.Vector3(
           c.group.position.x + offset.x,

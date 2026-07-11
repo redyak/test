@@ -57,7 +57,8 @@ const outline = new THREE.LineSegments(
 cubeGroup.add(outline);
 
 // Multi-cube spawner: allow multiple falling items and occupancy-aware landing
-const fallingCubes = [];
+var fallingCubes = [];
+var spawnedCubes=0
 const smallHalf = 1; // half-size of the small cube (2x2x2)
 
 const fallPathMaterial = new THREE.LineDashedMaterial({
@@ -149,12 +150,13 @@ function spawnFallingCube(x = 0, z = 0) {
 
   const obj = { group, mesh, pathLines, landed: false };
   fallingCubes.push(obj);
+  spawnedCubes++;
   return obj;
 }
 
 // start with one falling cube
-spawnFallingCube(0, 0);
-const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.18 });
+spawnFallingCube(0, 2);
+const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fffff, transparent: true, opacity: 0.18 });
 const gridSize = 6;
 const gridDivisions = 6;
 
@@ -204,7 +206,7 @@ renderer.domElement.addEventListener('pointerleave', stopDragging);
 
 function animate() {
   requestAnimationFrame(animate);
-  
+
   // Animate all falling cubes with occupancy-aware landing
   for (let idx = 0; idx < fallingCubes.length; idx++) {
     const c = fallingCubes[idx];
@@ -225,8 +227,15 @@ function animate() {
       cols.forEach(([i, j]) => {
         occupancy[i][j] += objHeight; // mark occupied by the full object height (2)
       });
-      // spawn next cube after this one lands
-      spawnFallingCube(0, 0);
+  
+  // Remove path lines from scene
+  c.pathLines.forEach(({ line }) => cubeGroup.remove(line));
+  // Remove cube from tracking array
+  fallingCubes=fallingCubes.filter(obj => obj !== c);
+ 
+  // Spawn new cube
+  if (spawnedCubes < 4) spawnFallingCube(0, 0);
+
     }
 
     // Update each corner path to follow the falling cube's bottom corners

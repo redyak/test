@@ -9,6 +9,18 @@ function setError(msg) {
   console.error(msg);
 }
 
+function getBottomCornerOffsets(mesh) {
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    const box = mesh.geometry.boundingBox;
+    const bottomY = box.min.y;
+    return [
+              new THREE.Vector3(box.min.x, bottomY, box.min.z),
+                  new THREE.Vector3(box.max.x, bottomY, box.min.z),
+                      new THREE.Vector3(box.max.x, bottomY, box.max.z),
+                          new THREE.Vector3(box.min.x, bottomY, box.max.z)
+                            ].map(corner => corner.clone().applyMatrix4(mesh.matrix));
+}
+
 try {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#040816');
@@ -137,7 +149,7 @@ function spawnFallingCube(x = 0, z = 0) {
     { x: -smallHalf, z: smallHalf },
     { x: -smallHalf, z: -smallHalf }
   ];
-  const pathLines = cornerOffsets.map((off) => {
+  /*const pathLines = cornerOffsets.map((off) => {
     const start = new THREE.Vector3(off.x, group.position.y - smallHalf, off.z);
     const end = new THREE.Vector3(off.x, targetY - smallHalf, off.z);
     const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
@@ -146,7 +158,25 @@ function spawnFallingCube(x = 0, z = 0) {
     line.renderOrder = 999;
     cubeGroup.add(line);
     return { line, off };
-  });
+  });*/
+
+// NEW: Dynamic bottom corners
+  const bottomCornerOffsets = getBottomCornerOffsets(mesh);
+  const pathLines = bottomCornerOffsets.map((offset) => {
+  const start = new THREE.Vector3(
+  group.position.x + offset.x,
+                    group.position.y + offset.y,
+                          group.position.z + offset.z
+                              );
+          
+  const end = new THREE.Vector3(start.x, targetY, start.z);
+                                      const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
+                                          const line = new THREE.Line(geom, fallPathMaterial);
+                                              line.computeLineDistances?.();
+                                                  line.renderOrder = 999;
+                                                      cubeGroup.add(line);
+                                                          return { line, offset };
+                                                            });
 
   const obj = { group, mesh, pathLines, landed: false };
   fallingCubes.push(obj);
@@ -234,17 +264,28 @@ function animate() {
   fallingCubes=fallingCubes.filter(obj => obj !== c);
  
   // Spawn new cube
-  if (spawnedCubes < 4) spawnFallingCube(0, 0);
+  if (spawnedCubes < 4) spawnFallingCube(1, 0);
 
     }
 
     // Update each corner path to follow the falling cube's bottom corners
-    c.pathLines.forEach(({ line, off }) => {
+  /*  c.pathLines.forEach(({ line, off }) => {
       const start = new THREE.Vector3(off.x, c.group.position.y - smallHalf, off.z);
       const end = new THREE.Vector3(off.x, targetY - smallHalf, off.z);
       line.geometry.setFromPoints([start, end]);
       line.computeLineDistances?.();
-    });
+    });*/
+    // 3. Update animate loop
+    c.pathLines.forEach(({ line, offset }) => {
+      const start = new THREE.Vector3(
+          c.group.position.x + offset.x,
+              c.group.position.y + offset.y,
+                  c.group.position.z + offset.z
+                    );
+                      const end = new THREE.Vector3(start.x, targetY, start.z);
+                        line.geometry.setFromPoints([start, end]);
+                          line.computeLineDistances?.();
+                          });
   }
   
   renderer.render(scene, camera);

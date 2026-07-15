@@ -13,32 +13,81 @@ const GRID_SIZE = 6;
 const SHAPES = [
   {
     name: 'cube',
-    geometry: new THREE.BoxGeometry(2, 2, 2),
-    gridWidth: 2,
-    gridDepth: 2,
-    height: 2,
+    cubes: [
+      { x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 },
+      { x: 0, y: 0, z: 1 }, { x: 1, y: 0, z: 1 },
+      { x: 0, y: 1, z: 0 }, { x: 1, y: 1, z: 0 },
+      { x: 0, y: 1, z: 1 }, { x: 1, y: 1, z: 1 }
+    ],
     color: 0x8fe8ff
   },
   {
     name: 'stick',
-    geometry: new THREE.BoxGeometry(1, 1, 3),
-    gridWidth: 1,
-    gridDepth: 3,
-    height: 1,
+    cubes: [
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: 1 },
+      { x: 0, y: 0, z: 2 }
+    ],
     color: 0xff8888
+  },
+  {
+    name: 'L-shape',
+    cubes: [
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: 1 },
+      { x: 0, y: 0, z: 2 },
+      { x: 1, y: 0, z: 0 }
+    ],
+    color: 0x88ff88
+  },
+  {
+    name: 'T-shape',
+    cubes: [
+      { x: 0, y: 0, z: 1 },
+      { x: 1, y: 0, z: 0 },
+      { x: 1, y: 0, z: 1 },
+      { x: 1, y: 0, z: 2 }
+    ],
+    color: 0xffff88
   }
 ];
 
-function getBottomCornerOffsets(mesh) {
-  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-  const box = mesh.geometry.boundingBox;
+// Derived shape properties from cube definitions
+function computeShapeProps(shape) {
+  let minX = 0, maxX = 0, minZ = 0, maxZ = 0, minY = 0, maxY = 0;
+  shape.cubes.forEach(c => {
+    minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x);
+    minZ = Math.min(minZ, c.z); maxZ = Math.max(maxZ, c.z);
+    minY = Math.min(minY, c.y); maxY = Math.max(maxY, c.y);
+  });
+  return {
+    gridWidth: maxX - minX + 1,
+    gridDepth: maxZ - minZ + 1,
+    height: maxY - minY + 1,
+    minX, minZ, minY
+  };
+}
+
+function getBottomCornerOffsets(group, shape, shapeProps) {
+  // Compute bounding box of the entire shape in local space
+  const box = new THREE.Box3();
+  group.children.forEach(child => {
+    if (child.geometry) {
+      child.geometry.computeBoundingBox();
+      const childBox = child.geometry.boundingBox.clone();
+      childBox.applyMatrix4(child.matrixWorld);
+      box.expandByPoint(childBox.min);
+      box.expandByPoint(childBox.max);
+    }
+  });
+
   const bottomY = box.min.y;
   return [
     new THREE.Vector3(box.min.x, bottomY, box.min.z),
     new THREE.Vector3(box.max.x, bottomY, box.min.z),
     new THREE.Vector3(box.max.x, bottomY, box.max.z),
     new THREE.Vector3(box.min.x, bottomY, box.max.z)
-  ].map(corner => corner.clone().applyMatrix4(mesh.matrix));
+  ].map(corner => corner.clone());
 }
 
 try {
@@ -100,83 +149,110 @@ try {
     depthTest: false
   });
 
-  const occupancy = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
+  const occupancy = Array.from({ length: GRID_SIZE }, () =>
+    Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0))
+  );
 
   function cellCenterWorld(index) {
     return index - cubeHalfSize + 0.5;
   }
 
-  function footprintIndices(gridCol, gridRow, gridWidth, gridDepth) {
+  function footprintIndices(gridCol, gridRow, shape, shapeProps) {
     const cells = [];
-    for (let i = gridCol; i < gridCol + gridWidth; i++) {
-      if (i < 0 || i >= GRID_SIZE) continue;
-      for (let j = gridRow; j < gridRow + gridDepth; j++) {
-        if (j < 0 || j >= GRID_SIZE) continue;
-        cells.push([i, j]);
+    shape.cubes.forEach(cube => {
+      const x = gridCol + cube.x - shapeProps.minX;
+      const z = gridRow + cube.z - shapeProps.minZ;
+      if (x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE) {
+        cells.push([x, z, cube.y - shapeProps.minY]);
       }
-    }
+    });
     return cells;
   }
 
-  // Strict containment check: the WHOLE shape footprint must fit inside the
-  // grid — used to validate drag moves (no partial/out-of-bounds placement).
-  function fitsInGrid(gridCol, gridRow, gridWidth, gridDepth) {
-    return (
-      gridCol >= 0 &&
-      gridRow >= 0 &&
-      gridCol + gridWidth <= GRID_SIZE &&
-      gridRow + gridDepth <= GRID_SIZE
-    );
-  }
-
-  function computeTargetYFor(gridCol, gridRow, gridWidth, gridDepth, objHeight) {
-    const cells = footprintIndices(gridCol, gridRow, gridWidth, gridDepth);
-    let maxLayer = 0;
-    if (cells.length === 0) return -cubeHalfSize + objHeight / 2;
-    cells.forEach(([i, j]) => {
-      if (occupancy[i][j] > maxLayer) maxLayer = occupancy[i][j];
+  function fitsInGrid(gridCol, gridRow, shape, shapeProps) {
+    return shape.cubes.every(cube => {
+      const x = gridCol + cube.x - shapeProps.minX;
+      const z = gridRow + cube.z - shapeProps.minZ;
+      return x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE;
     });
-    return -cubeHalfSize + objHeight / 2 + maxLayer;
   }
 
-  function gridToWorldXZ(gridCol, gridRow, shape) {
+  function computeTargetYFor(gridCol, gridRow, shape, shapeProps) {
+    const cells = footprintIndices(gridCol, gridRow, shape, shapeProps);
+    if (cells.length === 0) return -cubeHalfSize + shapeProps.height / 2;
+
+    let maxLayer = 0;
+    cells.forEach(([i, j, y]) => {
+      for (let ly = 0; ly <= y; ly++) {
+        if (occupancy[i][j][ly] > maxLayer) {
+          maxLayer = occupancy[i][j][ly];
+        }
+      }
+    });
+    return -cubeHalfSize + shapeProps.height / 2 + maxLayer;
+  }
+
+  function gridToWorldXZ(gridCol, gridRow, shape, shapeProps) {
+    // Center the shape based on its footprint
+    const centerX = (shapeProps.gridWidth - 1) / 2 - shapeProps.minX;
+    const centerZ = (shapeProps.gridDepth - 1) / 2 - shapeProps.minZ;
     return {
-      x: cellCenterWorld(gridCol) + (shape.gridWidth - 1) / 2,
-      z: cellCenterWorld(gridRow) + (shape.gridDepth - 1) / 2
+      x: cellCenterWorld(gridCol + centerX),
+      z: cellCenterWorld(gridRow + centerZ)
     };
   }
 
+  const unitCubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+
   function spawnFallingObject(gridCol = 0, gridRow = 0) {
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-    const { x: worldX, z: worldZ } = gridToWorldXZ(gridCol, gridRow, shape);
+    const shapeProps = computeShapeProps(shape);
+    const { x: worldX, z: worldZ } = gridToWorldXZ(gridCol, gridRow, shape, shapeProps);
 
     const group = new THREE.Group();
     const startY = cubeHalfSize + 2;
     group.position.set(worldX, startY, worldZ);
 
-    const mesh = new THREE.Mesh(
-      shape.geometry,
-      new THREE.MeshStandardMaterial({
-        color: shape.color,
-        emissive: 0x144b7a,
-        emissiveIntensity: 0.45,
-        roughness: 0.2,
-        metalness: 0.3
-      })
-    );
-    group.add(mesh);
+    const material = new THREE.MeshStandardMaterial({
+      color: shape.color,
+      emissive: 0x144b7a,
+      emissiveIntensity: 0.45,
+      roughness: 0.2,
+      metalness: 0.3
+    });
 
+    // Create individual 1x1x1 cubes for the shape
+    shape.cubes.forEach(cube => {
+      const mesh = new THREE.Mesh(unitCubeGeometry, material);
+      mesh.position.set(
+        cube.x - shapeProps.minX,
+        cube.y - shapeProps.minY,
+        cube.z - shapeProps.minZ
+      );
+      group.add(mesh);
+    });
+
+    // Create outline for the entire shape
     const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(shape.geometry),
+      new THREE.EdgesGeometry(unitCubeGeometry),
       new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 })
     );
-    group.add(outline);
+    // For simplicity, we'll just show outlines on each cube
+    shape.cubes.forEach(cube => {
+      const cubeOutline = outline.clone();
+      cubeOutline.position.set(
+        cube.x - shapeProps.minX,
+        cube.y - shapeProps.minY,
+        cube.z - shapeProps.minZ
+      );
+      group.add(cubeOutline);
+    });
 
     cubeGroup.add(group);
 
-    const targetY = computeTargetYFor(gridCol, gridRow, shape.gridWidth, shape.gridDepth, shape.height);
+    const targetY = computeTargetYFor(gridCol, gridRow, shape, shapeProps);
+    const bottomCornerOffsets = getBottomCornerOffsets(group, shape, shapeProps);
 
-    const bottomCornerOffsets = getBottomCornerOffsets(mesh);
     const pathLines = bottomCornerOffsets.map((offset) => {
       const start = new THREE.Vector3(
         group.position.x + offset.x,
@@ -194,10 +270,10 @@ try {
 
     const obj = {
       group,
-      mesh,
       pathLines,
       landed: false,
       shape,
+      shapeProps,
       gridCol,
       gridRow
     };
@@ -206,18 +282,15 @@ try {
     return obj;
   }
 
-  // Attempts to nudge a still-falling object by one grid cell along dCol/dRow.
-  // Rejects the move (returns false) if the object is no longer falling, or
-  // if the shape would land partly/fully outside the 6x6x6 cube.
   function tryMoveFallingObject(obj, dCol, dRow) {
     if (!obj || obj.landed) return false;
     const newCol = obj.gridCol + dCol;
     const newRow = obj.gridRow + dRow;
-    if (!fitsInGrid(newCol, newRow, obj.shape.gridWidth, obj.shape.gridDepth)) return false;
+    if (!fitsInGrid(newCol, newRow, obj.shape, obj.shapeProps)) return false;
 
     obj.gridCol = newCol;
     obj.gridRow = newRow;
-    const { x, z } = gridToWorldXZ(newCol, newRow, obj.shape);
+    const { x, z } = gridToWorldXZ(newCol, newRow, obj.shape, obj.shapeProps);
     obj.group.position.x = x;
     obj.group.position.z = z;
     return true;
@@ -236,9 +309,6 @@ try {
   });
 
   // ========== CUBE ROTATION ZONE ==========
-  // A dedicated strip beneath the cube that alone captures left/right swipes
-  // for rotation. Kept separate from the rest of the canvas/screen so it
-  // doesn't conflict with dragging the falling object (below).
   const rotationZone = document.createElement('div');
   rotationZone.id = 'rotation-zone';
   rotationZone.setAttribute('aria-label', 'Rotate cube left or right');
@@ -299,12 +369,6 @@ try {
   rotationZone.addEventListener('pointerleave', stopDragging);
 
   // ========== FALLING-OBJECT DRAG (canvas only) ==========
-  // Dragging on the main canvas nudges the currently-falling object by one
-  // grid cell along whichever LOCAL axis (X or Z, relative to the cube's
-  // current rotation) the swipe most closely matches. Only active while an
-  // object is falling, and only applied if the destination keeps the whole
-  // shape inside the grid.
-
   function worldToScreen(vec3) {
     const v = vec3.clone().project(camera);
     const w = renderer.domElement.clientWidth;
@@ -312,10 +376,10 @@ try {
     return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h };
   }
 
-  const OBJECT_DRAG_LOCK_PX = 12;   // min movement before an axis is locked in
-  const OBJECT_DRAG_MOVE_PX = 55;   // movement along the locked axis needed to trigger a 1-cell move
+  const OBJECT_DRAG_LOCK_PX = 12;
+  const OBJECT_DRAG_MOVE_PX = 55;
 
-  let objectDrag = null; // { obj, startX, startY, axis: 'col'|'row'|null, sign, applied }
+  let objectDrag = null;
 
   canvas.addEventListener('pointerdown', (event) => {
     const obj = fallingObjects.find(o => !o.landed);
@@ -347,9 +411,6 @@ try {
     if (!objectDrag.axis) {
       if (Math.hypot(deltaX, deltaY) < OBJECT_DRAG_LOCK_PX) return;
 
-      // Project the cube's local +X and +Z axes (accounting for current
-      // rotation) into screen space to find which grid axis the swipe
-      // direction actually corresponds to on-screen.
       const originWorld = obj.group.getWorldPosition(new THREE.Vector3());
       const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(cubeGroup.quaternion);
       const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(cubeGroup.quaternion);
@@ -385,7 +446,7 @@ try {
       const dCol = objectDrag.axis === 'col' ? objectDrag.sign : 0;
       const dRow = objectDrag.axis === 'row' ? objectDrag.sign : 0;
       tryMoveFallingObject(obj, dCol, dRow);
-      objectDrag.applied = true; // one nudge per drag gesture
+      objectDrag.applied = true;
     }
   });
 
@@ -407,16 +468,18 @@ try {
       const c = fallingObjects[idx];
       if (c.landed) continue;
 
-      const targetY = computeTargetYFor(c.gridCol, c.gridRow, c.shape.gridWidth, c.shape.gridDepth, c.shape.height);
+      const targetY = computeTargetYFor(c.gridCol, c.gridRow, c.shape, c.shapeProps);
 
       if (c.group.position.y > targetY) {
         c.group.position.y -= fallSpeed;
       } else {
         c.group.position.y = targetY;
         c.landed = true;
-        const cells = footprintIndices(c.gridCol, c.gridRow, c.shape.gridWidth, c.shape.gridDepth);
-        cells.forEach(([i, j]) => {
-          occupancy[i][j] += c.shape.height;
+
+        // Update occupancy for each cube in the shape
+        const cells = footprintIndices(c.gridCol, c.gridRow, c.shape, c.shapeProps);
+        cells.forEach(([i, j, y]) => {
+          occupancy[i][j][y] = 1;
         });
 
         c.pathLines.forEach(({ line }) => cubeGroup.remove(line));
@@ -425,7 +488,10 @@ try {
         if (spawnedCount < 6) spawnFallingObject(1, 0);
       }
 
-      c.pathLines.forEach(({ line, offset }) => {
+      // Update path lines
+      const bottomCornerOffsets = getBottomCornerOffsets(c.group, c.shape, c.shapeProps);
+      c.pathLines.forEach(({ line }, index) => {
+        const offset = bottomCornerOffsets[index] || bottomCornerOffsets[0];
         const start = new THREE.Vector3(
           c.group.position.x + offset.x,
           c.group.position.y + offset.y,

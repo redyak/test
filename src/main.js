@@ -3,16 +3,13 @@ import * as THREE from 'three';
 const canvas = document.getElementById('game');
 const scoreEl = document.getElementById('score');
 
-// Helper to display errors on-screen
 function setError(msg) {
   if (scoreEl) scoreEl.textContent = 'ERROR: ' + msg;
   console.error(msg);
 }
 
-// ========== GRID CONSTANTS ==========
-const GRID_SIZE = 6; // 6x6 cells in the footprint plane
+const GRID_SIZE = 6;
 
-// ========== SHAPE DEFINITIONS ==========
 const SHAPES = [
   {
     name: 'cube',
@@ -29,33 +26,8 @@ const SHAPES = [
     gridDepth: 3,
     height: 1,
     color: 0xff8888
-  }/*,
-  {
-    name: 'lshape',
-    geometry: createLShapeGeometry(),
-    gridWidth: 3,
-    gridDepth: 2,
-    height: 1,
-    color: 0x88ff88
-  }*/
+  }
 ];
-
-function createLShapeGeometry() {
-  const unitGeo = new THREE.BoxGeometry(1, 1, 1);
-  const geometry = new THREE.BufferGeometry();
-  const positions = [
-    { x: 0, y: 0, z: 0 },
-    { x: 1, y: 0, z: 0 },
-    { x: 2, y: 0, z: 0 },
-    { x: 2, y: 0, z: 1 }
-  ];
-  positions.forEach(({ x, y, z }) => {
-    const cubeGeo = unitGeo.clone();
-    cubeGeo.applyMatrix4(new THREE.Matrix4().makeTranslation(x, y, z));
-    geometry.merge(cubeGeo, 0);
-  });
-  return geometry;
-}
 
 function getBottomCornerOffsets(mesh) {
   if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
@@ -146,6 +118,17 @@ try {
     return cells;
   }
 
+  // Strict containment check: the WHOLE shape footprint must fit inside the
+  // grid — used to validate drag moves (no partial/out-of-bounds placement).
+  function fitsInGrid(gridCol, gridRow, gridWidth, gridDepth) {
+    return (
+      gridCol >= 0 &&
+      gridRow >= 0 &&
+      gridCol + gridWidth <= GRID_SIZE &&
+      gridRow + gridDepth <= GRID_SIZE
+    );
+  }
+
   function computeTargetYFor(gridCol, gridRow, gridWidth, gridDepth, objHeight) {
     const cells = footprintIndices(gridCol, gridRow, gridWidth, gridDepth);
     let maxLayer = 0;
@@ -156,11 +139,16 @@ try {
     return -cubeHalfSize + objHeight / 2 + maxLayer;
   }
 
+  function gridToWorldXZ(gridCol, gridRow, shape) {
+    return {
+      x: cellCenterWorld(gridCol) + (shape.gridWidth - 1) / 2,
+      z: cellCenterWorld(gridRow) + (shape.gridDepth - 1) / 2
+    };
+  }
+
   function spawnFallingObject(gridCol = 0, gridRow = 0) {
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-
-    const worldX = cellCenterWorld(gridCol) + (shape.gridWidth - 1) / 2;
-    const worldZ = cellCenterWorld(gridRow) + (shape.gridDepth - 1) / 2;
+    const { x: worldX, z: worldZ } = gridToWorldXZ(gridCol, gridRow, shape);
 
     const group = new THREE.Group();
     const startY = cubeHalfSize + 2;
@@ -218,6 +206,23 @@ try {
     return obj;
   }
 
+  // Attempts to nudge a still-falling object by one grid cell along dCol/dRow.
+  // Rejects the move (returns false) if the object is no longer falling, or
+  // if the shape would land partly/fully outside the 6x6x6 cube.
+  function tryMoveFallingObject(obj, dCol, dRow) {
+    if (!obj || obj.landed) return false;
+    const newCol = obj.gridCol + dCol;
+    const newRow = obj.gridRow + dRow;
+    if (!fitsInGrid(newCol, newRow, obj.shape.gridWidth, obj.shape.gridDepth)) return false;
+
+    obj.gridCol = newCol;
+    obj.gridRow = newRow;
+    const { x, z } = gridToWorldXZ(newCol, newRow, obj.shape);
+    obj.group.position.x = x;
+    obj.group.position.z = z;
+    return true;
+  }
+
   spawnFallingObject(0, 2);
 
   const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fffff, transparent: true, opacity: 0.18 });
@@ -232,24 +237,15 @@ try {
 
   // ========== CUBE ROTATION ZONE ==========
   // A dedicated strip beneath the cube that alone captures left/right swipes
-  // for rotation. Kept separate from the rest of the canvas/screen so other
-  // controls added later won't fight with rotation gestures.
+  // for rotation. Kept separate from the rest of the canvas/screen so it
+  // doesn't conflict with dragging the falling object (below).
   const rotationZone = document.createElement('div');
   rotationZone.id = 'rotation-zone';
   rotationZone.setAttribute('aria-label', 'Rotate cube left or right');
   rotationZone.innerHTML = `
-    <svg viewBox="0 0 200 70" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
-      <defs>
-        <marker id="rotArrowLeft" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto-start-reverse">
-          <path d="M0,0 L9,4.5 L0,9 Z" fill="#8fe8ff"/>
-        </marker>
-        <marker id="rotArrowRight" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto">
-          <path d="M0,0 L9,4.5 L0,9 Z" fill="#8fe8ff"/>
-        </marker>
-      </defs>
-      <path d="M22,55 A78,78 0 0 1 178,55"
-            fill="none" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round"
-            marker-start="url(#rotArrowLeft)" marker-end="url(#rotArrowRight)" opacity="0.9"/>
+    <svg viewBox="0 0 48 48" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+      <path d="M20 31L24 35L20 39" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M32 34.1679C39.0636 32.6248 44 29.1006 44 25C44 19.4772 35.0457 15 24 15C12.9543 15 4 19.4772 4 25C4 30.5228 12.9543 35 24 35" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
     </svg>
   `;
   document.body.appendChild(rotationZone);
@@ -277,8 +273,6 @@ try {
   `;
   document.head.appendChild(rotationZoneStyle);
 
-  // Rotation is now driven entirely by pointer events on rotationZone,
-  // NOT on renderer.domElement / the rest of the screen.
   let isDragging = false;
   let lastX = 0;
 
@@ -303,6 +297,106 @@ try {
   rotationZone.addEventListener('pointerup', stopDragging);
   rotationZone.addEventListener('pointercancel', stopDragging);
   rotationZone.addEventListener('pointerleave', stopDragging);
+
+  // ========== FALLING-OBJECT DRAG (canvas only) ==========
+  // Dragging on the main canvas nudges the currently-falling object by one
+  // grid cell along whichever LOCAL axis (X or Z, relative to the cube's
+  // current rotation) the swipe most closely matches. Only active while an
+  // object is falling, and only applied if the destination keeps the whole
+  // shape inside the grid.
+
+  function worldToScreen(vec3) {
+    const v = vec3.clone().project(camera);
+    const w = renderer.domElement.clientWidth;
+    const h = renderer.domElement.clientHeight;
+    return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h };
+  }
+
+  const OBJECT_DRAG_LOCK_PX = 12;   // min movement before an axis is locked in
+  const OBJECT_DRAG_MOVE_PX = 55;   // movement along the locked axis needed to trigger a 1-cell move
+
+  let objectDrag = null; // { obj, startX, startY, axis: 'col'|'row'|null, sign, applied }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    const obj = fallingObjects.find(o => !o.landed);
+    if (!obj) return;
+    objectDrag = {
+      obj,
+      startX: event.clientX,
+      startY: event.clientY,
+      axis: null,
+      sign: 0,
+      applied: false
+    };
+    canvas.style.cursor = 'grabbing';
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener('pointermove', (event) => {
+    if (!objectDrag) return;
+    const { obj } = objectDrag;
+    if (obj.landed) {
+      objectDrag = null;
+      canvas.style.cursor = 'grab';
+      return;
+    }
+
+    const deltaX = event.clientX - objectDrag.startX;
+    const deltaY = event.clientY - objectDrag.startY;
+
+    if (!objectDrag.axis) {
+      if (Math.hypot(deltaX, deltaY) < OBJECT_DRAG_LOCK_PX) return;
+
+      // Project the cube's local +X and +Z axes (accounting for current
+      // rotation) into screen space to find which grid axis the swipe
+      // direction actually corresponds to on-screen.
+      const originWorld = obj.group.getWorldPosition(new THREE.Vector3());
+      const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(cubeGroup.quaternion);
+      const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(cubeGroup.quaternion);
+
+      const originScreen = worldToScreen(originWorld);
+      const xScreen = worldToScreen(originWorld.clone().add(localX));
+      const zScreen = worldToScreen(originWorld.clone().add(localZ));
+
+      const dirCol = { x: xScreen.x - originScreen.x, y: xScreen.y - originScreen.y };
+      const dirRow = { x: zScreen.x - originScreen.x, y: zScreen.y - originScreen.y };
+
+      const normalize = (v) => {
+        const len = Math.hypot(v.x, v.y) || 1;
+        return { x: v.x / len, y: v.y / len };
+      };
+      const nCol = normalize(dirCol);
+      const nRow = normalize(dirRow);
+      const nDrag = normalize({ x: deltaX, y: deltaY });
+
+      const dotCol = nDrag.x * nCol.x + nDrag.y * nCol.y;
+      const dotRow = nDrag.x * nRow.x + nDrag.y * nRow.y;
+
+      if (Math.abs(dotCol) >= Math.abs(dotRow)) {
+        objectDrag.axis = 'col';
+        objectDrag.sign = dotCol >= 0 ? 1 : -1;
+      } else {
+        objectDrag.axis = 'row';
+        objectDrag.sign = dotRow >= 0 ? 1 : -1;
+      }
+    }
+
+    if (!objectDrag.applied && Math.hypot(deltaX, deltaY) >= OBJECT_DRAG_MOVE_PX) {
+      const dCol = objectDrag.axis === 'col' ? objectDrag.sign : 0;
+      const dRow = objectDrag.axis === 'row' ? objectDrag.sign : 0;
+      tryMoveFallingObject(obj, dCol, dRow);
+      objectDrag.applied = true; // one nudge per drag gesture
+    }
+  });
+
+  const stopObjectDrag = () => {
+    objectDrag = null;
+    canvas.style.cursor = 'grab';
+  };
+  canvas.addEventListener('pointerup', stopObjectDrag);
+  canvas.addEventListener('pointercancel', stopObjectDrag);
+  canvas.addEventListener('pointerleave', stopObjectDrag);
+  canvas.style.cursor = 'grab';
 
   const fallSpeed = 0.02;
 

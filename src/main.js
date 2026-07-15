@@ -485,7 +485,7 @@ try {
         c.pathLines.forEach(({ line }) => cubeGroup.remove(line));
         fallingObjects = fallingObjects.filter(obj => obj !== c);
 
-        if (spawnedCount < 6) spawnFallingObject(1, 0);
+        if (spawnedCount < 10) spawnFallingObject(1, 0);
       }
 
       // Update path lines

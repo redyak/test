@@ -13,15 +13,13 @@ function setError(msg) {
 const GRID_SIZE = 6; // 6x6 cells in the footprint plane
 
 // ========== SHAPE DEFINITIONS ==========
-// Shapes are now defined purely in integer grid cells (gridWidth x gridDepth)
-// instead of world-space half-extents (halfX/halfZ).
 const SHAPES = [
   {
     name: 'cube',
     geometry: new THREE.BoxGeometry(2, 2, 2),
-    gridWidth: 2,   // cells occupied along X
-    gridDepth: 2,   // cells occupied along Z
-    height: 2,      // world-unit height (layer thickness)
+    gridWidth: 2,
+    gridDepth: 2,
+    height: 2,
     color: 0x8fe8ff
   },
   {
@@ -42,7 +40,6 @@ const SHAPES = [
   }*/
 ];
 
-// Helper to create L-shape (3x1 base + 1x1 attached)
 function createLShapeGeometry() {
   const unitGeo = new THREE.BoxGeometry(1, 1, 1);
   const geometry = new THREE.BufferGeometry();
@@ -97,7 +94,7 @@ try {
   scene.add(cubeGroup);
 
   const cubeSize = 6;
-  const cubeHalfSize = cubeSize / 2; // still needed once, to center the world on the grid
+  const cubeHalfSize = cubeSize / 2;
 
   const cube = new THREE.Mesh(
     new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize),
@@ -119,7 +116,6 @@ try {
   );
   cubeGroup.add(outline);
 
-  // Multi-shape spawner
   let fallingObjects = [];
   let spawnedCount = 0;
 
@@ -132,18 +128,12 @@ try {
     depthTest: false
   });
 
-  // Occupancy grid: purely integer indices [0, GRID_SIZE)
   const occupancy = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
 
-  // Converts a grid cell's integer index to its world-space center coordinate.
-  // This is the only place a "half" appears, and it's a render-space concern,
-  // not part of the grid/footprint/occupancy logic.
   function cellCenterWorld(index) {
     return index - cubeHalfSize + 0.5;
   }
 
-  // Pure integer footprint: gridCol/gridRow are the index of the shape's
-  // minimum corner cell; gridWidth/gridDepth are its size in cells.
   function footprintIndices(gridCol, gridRow, gridWidth, gridDepth) {
     const cells = [];
     for (let i = gridCol; i < gridCol + gridWidth; i++) {
@@ -166,12 +156,9 @@ try {
     return -cubeHalfSize + objHeight / 2 + maxLayer;
   }
 
-  // gridCol/gridRow are now integer grid indices (the shape's minimum corner),
-  // not world coordinates.
   function spawnFallingObject(gridCol = 0, gridRow = 0) {
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
 
-    // World-space center, derived from the grid corner + shape size.
     const worldX = cellCenterWorld(gridCol) + (shape.gridWidth - 1) / 2;
     const worldZ = cellCenterWorld(gridRow) + (shape.gridDepth - 1) / 2;
 
@@ -231,7 +218,6 @@ try {
     return obj;
   }
 
-  // Start with one falling object (grid corner at col 0, row 2)
   spawnFallingObject(0, 2);
 
   const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fffff, transparent: true, opacity: 0.18 });
@@ -244,19 +230,66 @@ try {
     cubeGroup.add(grid);
   });
 
-  const fallSpeed = 0.02;
+  // ========== CUBE ROTATION ZONE ==========
+  // A dedicated strip beneath the cube that alone captures left/right swipes
+  // for rotation. Kept separate from the rest of the canvas/screen so other
+  // controls added later won't fight with rotation gestures.
+  const rotationZone = document.createElement('div');
+  rotationZone.id = 'rotation-zone';
+  rotationZone.setAttribute('aria-label', 'Rotate cube left or right');
+  rotationZone.innerHTML = `
+    <svg viewBox="0 0 200 70" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <marker id="rotArrowLeft" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto-start-reverse">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#8fe8ff"/>
+        </marker>
+        <marker id="rotArrowRight" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#8fe8ff"/>
+        </marker>
+      </defs>
+      <path d="M22,55 A78,78 0 0 1 178,55"
+            fill="none" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round"
+            marker-start="url(#rotArrowLeft)" marker-end="url(#rotArrowRight)" opacity="0.9"/>
+    </svg>
+  `;
+  document.body.appendChild(rotationZone);
+
+  const rotationZoneStyle = document.createElement('style');
+  rotationZoneStyle.textContent = `
+    #rotation-zone {
+      position: fixed;
+      left: 50%;
+      bottom: 20px;
+      transform: translateX(-50%);
+      width: 200px;
+      height: 70px;
+      z-index: 10;
+      cursor: grab;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+      opacity: 0.5;
+      transition: opacity 0.15s ease;
+    }
+    #rotation-zone:hover,
+    #rotation-zone:active {
+      opacity: 0.95;
+    }
+  `;
+  document.head.appendChild(rotationZoneStyle);
+
+  // Rotation is now driven entirely by pointer events on rotationZone,
+  // NOT on renderer.domElement / the rest of the screen.
   let isDragging = false;
   let lastX = 0;
 
-  renderer.domElement.style.cursor = 'grab';
-  renderer.domElement.addEventListener('pointerdown', (event) => {
+  rotationZone.addEventListener('pointerdown', (event) => {
     isDragging = true;
     lastX = event.clientX;
-    renderer.domElement.style.cursor = 'grabbing';
-    renderer.domElement.setPointerCapture(event.pointerId);
+    rotationZone.style.cursor = 'grabbing';
+    rotationZone.setPointerCapture(event.pointerId);
   });
 
-  renderer.domElement.addEventListener('pointermove', (event) => {
+  rotationZone.addEventListener('pointermove', (event) => {
     if (!isDragging) return;
     const deltaX = event.clientX - lastX;
     cubeGroup.rotation.y += deltaX * 0.01;
@@ -265,11 +298,13 @@ try {
 
   const stopDragging = () => {
     isDragging = false;
-    renderer.domElement.style.cursor = 'grab';
+    rotationZone.style.cursor = 'grab';
   };
-  renderer.domElement.addEventListener('pointerup', stopDragging);
-  renderer.domElement.addEventListener('pointercancel', stopDragging);
-  renderer.domElement.addEventListener('pointerleave', stopDragging);
+  rotationZone.addEventListener('pointerup', stopDragging);
+  rotationZone.addEventListener('pointercancel', stopDragging);
+  rotationZone.addEventListener('pointerleave', stopDragging);
+
+  const fallSpeed = 0.02;
 
   function animate() {
     requestAnimationFrame(animate);
@@ -324,6 +359,5 @@ try {
   setError(errMsg);
 }
 
-// Debug
 window.__occupancy = occupancy;
 window.__fallingObjects = fallingObjects;

@@ -52,9 +52,10 @@ const SHAPES = [
   }
 ];
 
-// Derived shape properties from cube definitions
 function computeShapeProps(shape) {
-  let minX = 0, maxX = 0, minZ = 0, maxZ = 0, minY = 0, maxY = 0;
+  let minX = Infinity, maxX = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
   shape.cubes.forEach(c => {
     minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x);
     minZ = Math.min(minZ, c.z); maxZ = Math.max(maxZ, c.z);
@@ -64,23 +65,20 @@ function computeShapeProps(shape) {
     gridWidth: maxX - minX + 1,
     gridDepth: maxZ - minZ + 1,
     height: maxY - minY + 1,
-    minX, minZ, minY
+    minX, maxX, minZ, maxZ, minY, maxY
   };
 }
 
 function getBottomCornerOffsets(group, shape, shapeProps) {
-  // Compute bounding box of the entire shape in local space
   const box = new THREE.Box3();
   group.children.forEach(child => {
     if (child.geometry) {
-      child.geometry.computeBoundingBox();
       const childBox = child.geometry.boundingBox.clone();
       childBox.applyMatrix4(child.matrixWorld);
       box.expandByPoint(childBox.min);
       box.expandByPoint(childBox.max);
     }
   });
-
   const bottomY = box.min.y;
   return [
     new THREE.Vector3(box.min.x, bottomY, box.min.z),
@@ -149,24 +147,38 @@ try {
     depthTest: false
   });
 
+  // 3D occupancy grid: occupancy[x][z][y] = true if occupied
   const occupancy = Array.from({ length: GRID_SIZE }, () =>
-    Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0))
+    Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(false))
   );
 
   function cellCenterWorld(index) {
     return index - cubeHalfSize + 0.5;
   }
 
-  function footprintIndices(gridCol, gridRow, shape, shapeProps) {
-    const cells = [];
+  function computeTargetYFor(gridCol, gridRow, shape, shapeProps) {
+    let minBaseY = 0;
+    let valid = true;
+
     shape.cubes.forEach(cube => {
       const x = gridCol + cube.x - shapeProps.minX;
       const z = gridRow + cube.z - shapeProps.minZ;
-      if (x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE) {
-        cells.push([x, z, cube.y - shapeProps.minY]);
+      if (x < 0 || x >= GRID_SIZE || z < 0 || z >= GRID_SIZE) {
+        valid = false;
+        return;
       }
+
+      let y = 0;
+      while (y < GRID_SIZE && occupancy[x][z][y]) y++;
+      if (y >= GRID_SIZE) valid = false;
+
+      const requiredBaseY = y - (cube.y - shapeProps.minY);
+      minBaseY = Math.max(minBaseY, requiredBaseY);
     });
-    return cells;
+
+    if (!valid) return -1000;
+
+    return -cubeHalfSize + minBaseY + shapeProps.minY + shapeProps.height / 2;
   }
 
   function fitsInGrid(gridCol, gridRow, shape, shapeProps) {
@@ -177,23 +189,7 @@ try {
     });
   }
 
-  function computeTargetYFor(gridCol, gridRow, shape, shapeProps) {
-    const cells = footprintIndices(gridCol, gridRow, shape, shapeProps);
-    if (cells.length === 0) return -cubeHalfSize + shapeProps.height / 2;
-
-    let maxLayer = 0;
-    cells.forEach(([i, j, y]) => {
-      for (let ly = 0; ly <= y; ly++) {
-        if (occupancy[i][j][ly] > maxLayer) {
-          maxLayer = occupancy[i][j][ly];
-        }
-      }
-    });
-    return -cubeHalfSize + shapeProps.height / 2 + maxLayer;
-  }
-
   function gridToWorldXZ(gridCol, gridRow, shape, shapeProps) {
-    // Center the shape based on its footprint
     const centerX = (shapeProps.gridWidth - 1) / 2 - shapeProps.minX;
     const centerZ = (shapeProps.gridDepth - 1) / 2 - shapeProps.minZ;
     return {
@@ -221,7 +217,6 @@ try {
       metalness: 0.3
     });
 
-    // Create individual 1x1x1 cubes for the shape
     shape.cubes.forEach(cube => {
       const mesh = new THREE.Mesh(unitCubeGeometry, material);
       mesh.position.set(
@@ -232,14 +227,11 @@ try {
       group.add(mesh);
     });
 
-    // Create outline for the entire shape
-    const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(unitCubeGeometry),
-      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 })
-    );
-    // For simplicity, we'll just show outlines on each cube
     shape.cubes.forEach(cube => {
-      const cubeOutline = outline.clone();
+      const cubeOutline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(unitCubeGeometry),
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 })
+      );
       cubeOutline.position.set(
         cube.x - shapeProps.minX,
         cube.y - shapeProps.minY,
@@ -287,6 +279,9 @@ try {
     const newCol = obj.gridCol + dCol;
     const newRow = obj.gridRow + dRow;
     if (!fitsInGrid(newCol, newRow, obj.shape, obj.shapeProps)) return false;
+
+    const targetY = computeTargetYFor(newCol, newRow, obj.shape, obj.shapeProps);
+    if (targetY < -100) return false;
 
     obj.gridCol = newCol;
     obj.gridRow = newRow;
@@ -368,7 +363,7 @@ try {
   rotationZone.addEventListener('pointercancel', stopDragging);
   rotationZone.addEventListener('pointerleave', stopDragging);
 
-  // ========== FALLING-OBJECT DRAG (canvas only) ==========
+  // ========== FALLING-OBJECT DRAG ==========
   function worldToScreen(vec3) {
     const v = vec3.clone().project(camera);
     const w = renderer.domElement.clientWidth;
@@ -476,19 +471,25 @@ try {
         c.group.position.y = targetY;
         c.landed = true;
 
-        // Update occupancy for each cube in the shape
-        const cells = footprintIndices(c.gridCol, c.gridRow, c.shape, c.shapeProps);
-        cells.forEach(([i, j, y]) => {
-          occupancy[i][j][y] = 1;
+        // Calculate baseY from group position
+        const baseY = c.group.position.y + cubeHalfSize - c.shapeProps.minY - c.shapeProps.height / 2;
+
+        // Mark all cube positions as occupied
+        c.shape.cubes.forEach(cube => {
+          const x = c.gridCol + cube.x - c.shapeProps.minX;
+          const z = c.gridRow + cube.z - c.shapeProps.minZ;
+          const y = Math.round(baseY + cube.y - c.shapeProps.minY);
+          if (x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
+            occupancy[x][z][y] = true;
+          }
         });
 
         c.pathLines.forEach(({ line }) => cubeGroup.remove(line));
         fallingObjects = fallingObjects.filter(obj => obj !== c);
 
-        if (spawnedCount < 10) spawnFallingObject(1, 0);
+        if (spawnedCount < 6) spawnFallingObject(1, 0);
       }
 
-      // Update path lines
       const bottomCornerOffsets = getBottomCornerOffsets(c.group, c.shape, c.shapeProps);
       c.pathLines.forEach(({ line }, index) => {
         const offset = bottomCornerOffsets[index] || bottomCornerOffsets[0];

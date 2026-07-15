@@ -164,6 +164,7 @@ try {
     depthTest: false
   });
 
+  // 3D occupancy grid: occupancy[x][z][y] = true if occupied
   const occupancy = Array.from({ length: GRID_SIZE }, () =>
     Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(false))
   );
@@ -192,8 +193,8 @@ try {
       minBaseY = Math.max(minBaseY, requiredBaseY);
     });
 
-    if (!valid) return -1000;
-    return -cubeHalfSize + minBaseY + shapeProps.minY + shapeProps.height / 2;
+    if (!valid) return -1;
+    return minBaseY;
   }
 
   function fitsInGrid(gridCol, gridRow, shape, shapeProps) {
@@ -204,12 +205,10 @@ try {
     });
   }
 
-  function gridToWorldXZ(gridCol, gridRow, shape, shapeProps) {
-    const centerX = (shapeProps.gridWidth - 1) / 2 - shapeProps.minX;
-    const centerZ = (shapeProps.gridDepth - 1) / 2 - shapeProps.minZ;
+  function gridToWorldXZ(gridCol, gridRow) {
     return {
-      x: cellCenterWorld(gridCol + centerX),
-      z: cellCenterWorld(gridRow + centerZ)
+      x: cellCenterWorld(gridCol),
+      z: cellCenterWorld(gridRow)
     };
   }
 
@@ -220,7 +219,7 @@ try {
   function spawnFallingObject(gridCol = 0, gridRow = 0) {
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
     const shapeProps = computeShapeProps(shape);
-    const { x: worldX, z: worldZ } = gridToWorldXZ(gridCol, gridRow, shape, shapeProps);
+    const { x: worldX, z: worldZ } = gridToWorldXZ(gridCol, gridRow);
 
     const group = new THREE.Group();
     const startY = cubeHalfSize + 2;
@@ -260,7 +259,9 @@ try {
     cubeGroup.add(group);
     group.updateMatrixWorld(true);
 
-    const targetY = computeTargetYFor(gridCol, gridRow, shape, shapeProps);
+    const gridBaseY = computeTargetYFor(gridCol, gridRow, shape, shapeProps);
+    const worldTargetY = gridBaseY - cubeHalfSize + 0.5;
+
     const bottomCornerOffsets = getBottomCornerOffsets(group);
 
     const pathLines = bottomCornerOffsets.map((offset) => {
@@ -269,7 +270,7 @@ try {
         group.position.y + offset.y,
         group.position.z + offset.z
       );
-      const end = new THREE.Vector3(start.x, targetY, start.z);
+      const end = new THREE.Vector3(start.x, worldTargetY, start.z);
       const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
       const line = new THREE.Line(geom, fallPathMaterial);
       line.computeLineDistances?.();
@@ -285,7 +286,8 @@ try {
       shape,
       shapeProps,
       gridCol,
-      gridRow
+      gridRow,
+      gridBaseY: gridBaseY
     };
     fallingObjects.push(obj);
     spawnedCount++;
@@ -298,12 +300,13 @@ try {
     const newRow = obj.gridRow + dRow;
     if (!fitsInGrid(newCol, newRow, obj.shape, obj.shapeProps)) return false;
 
-    const targetY = computeTargetYFor(newCol, newRow, obj.shape, obj.shapeProps);
-    if (targetY < -100) return false;
+    const gridBaseY = computeTargetYFor(newCol, newRow, obj.shape, obj.shapeProps);
+    if (gridBaseY < 0) return false;
 
     obj.gridCol = newCol;
     obj.gridRow = newRow;
-    const { x, z } = gridToWorldXZ(newCol, newRow, obj.shape, obj.shapeProps);
+    obj.gridBaseY = gridBaseY;
+    const { x, z } = gridToWorldXZ(newCol, newRow);
     obj.group.position.x = x;
     obj.group.position.z = z;
     return true;
@@ -481,20 +484,22 @@ try {
       const c = fallingObjects[idx];
       if (c.landed) continue;
 
-      const targetY = computeTargetYFor(c.gridCol, c.gridRow, c.shape, c.shapeProps);
+      const gridBaseY = computeTargetYFor(c.gridCol, c.gridRow, c.shape, c.shapeProps);
+      const worldTargetY = gridBaseY - cubeHalfSize + 0.5;
 
-      if (c.group.position.y > targetY) {
+      c.gridBaseY = gridBaseY;
+
+      if (c.group.position.y > worldTargetY) {
         c.group.position.y -= fallSpeed;
       } else {
-        c.group.position.y = targetY;
+        c.group.position.y = worldTargetY;
         c.landed = true;
 
-        const baseY = c.group.position.y + cubeHalfSize - c.shapeProps.minY - c.shapeProps.height / 2;
-
+        // Mark exact grid positions occupied by each cube
         c.shape.cubes.forEach(cube => {
           const x = c.gridCol + cube.x - c.shapeProps.minX;
           const z = c.gridRow + cube.z - c.shapeProps.minZ;
-          const y = Math.round(baseY + cube.y - c.shapeProps.minY);
+          const y = gridBaseY + cube.y - c.shapeProps.minY;
           if (x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
             occupancy[x][z][y] = true;
           }
@@ -515,7 +520,7 @@ try {
           c.group.position.y + offset.y,
           c.group.position.z + offset.z
         );
-        const end = new THREE.Vector3(start.x, targetY, start.z);
+        const end = new THREE.Vector3(start.x, worldTargetY, start.z);
         line.geometry.setFromPoints([start, end]);
         line.computeLineDistances?.();
       });

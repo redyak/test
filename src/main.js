@@ -9,30 +9,34 @@ function setError(msg) {
   console.error(msg);
 }
 
+// ========== GRID CONSTANTS ==========
+const GRID_SIZE = 6; // 6x6 cells in the footprint plane
+
 // ========== SHAPE DEFINITIONS ==========
-// Define the 3 possible shapes with their geometries and dimensions
+// Shapes are now defined purely in integer grid cells (gridWidth x gridDepth)
+// instead of world-space half-extents (halfX/halfZ).
 const SHAPES = [
   {
     name: 'cube',
     geometry: new THREE.BoxGeometry(2, 2, 2),
-    halfX: 1,
-    halfZ: 1,
-    height: 2,
+    gridWidth: 2,   // cells occupied along X
+    gridDepth: 2,   // cells occupied along Z
+    height: 2,      // world-unit height (layer thickness)
     color: 0x8fe8ff
   },
   {
     name: 'stick',
     geometry: new THREE.BoxGeometry(1, 1, 3),
-    halfX: 0.5,
-    halfZ: 1.5,
+    gridWidth: 1,
+    gridDepth: 3,
     height: 1,
     color: 0xff8888
   }/*,
   {
     name: 'lshape',
     geometry: createLShapeGeometry(),
-    halfX: 1.5,
-    halfZ: 1.0,
+    gridWidth: 3,
+    gridDepth: 2,
     height: 1,
     color: 0x88ff88
   }*/
@@ -42,7 +46,6 @@ const SHAPES = [
 function createLShapeGeometry() {
   const unitGeo = new THREE.BoxGeometry(1, 1, 1);
   const geometry = new THREE.BufferGeometry();
-  // Positions: 3 cubes in a row (X-axis) + 1 cube attached to the end (Z-axis)
   const positions = [
     { x: 0, y: 0, z: 0 },
     { x: 1, y: 0, z: 0 },
@@ -94,7 +97,7 @@ try {
   scene.add(cubeGroup);
 
   const cubeSize = 6;
-  const cubeHalfSize = cubeSize / 2;
+  const cubeHalfSize = cubeSize / 2; // still needed once, to center the world on the grid
 
   const cube = new THREE.Mesh(
     new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize),
@@ -119,7 +122,6 @@ try {
   // Multi-shape spawner
   let fallingObjects = [];
   let spawnedCount = 0;
-  const smallHalf = 1;
 
   const fallPathMaterial = new THREE.LineDashedMaterial({
     color: 0xffff66,
@@ -130,47 +132,53 @@ try {
     depthTest: false
   });
 
-  // Initialize occupancy grid
-  const occupancy = Array.from({ length: 6 }, () => Array(6).fill(0));
-  const gridCenters = Array.from({ length: 6 }, (_, i) => -cubeHalfSize + 0.5 + i);
+  // Occupancy grid: purely integer indices [0, GRID_SIZE)
+  const occupancy = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
 
-  // Updated to use halfX and halfZ
-  function footprintIndicesAt(objX, objZ, halfX, halfZ) {
-    const cols = [];
-    for (let i = 0; i < 6; i++) {
-      const cx = gridCenters[i];
-      if (cx >= objX - halfX && cx < objX + halfX) {
-        for (let j = 0; j < 6; j++) {
-          const cz = gridCenters[j];
-          if (cz >= objZ - halfZ && cz < objZ + halfZ) {
-            cols.push([i, j]);
-          }
-        }
-      }
-    }
-    return cols;
+  // Converts a grid cell's integer index to its world-space center coordinate.
+  // This is the only place a "half" appears, and it's a render-space concern,
+  // not part of the grid/footprint/occupancy logic.
+  function cellCenterWorld(index) {
+    return index - cubeHalfSize + 0.5;
   }
 
-  // Updated to use shape dimensions
-  function computeTargetYFor(objX, objZ, halfX, halfZ, objHeight) {
-    const cols = footprintIndicesAt(objX, objZ, halfX, halfZ);
+  // Pure integer footprint: gridCol/gridRow are the index of the shape's
+  // minimum corner cell; gridWidth/gridDepth are its size in cells.
+  function footprintIndices(gridCol, gridRow, gridWidth, gridDepth) {
+    const cells = [];
+    for (let i = gridCol; i < gridCol + gridWidth; i++) {
+      if (i < 0 || i >= GRID_SIZE) continue;
+      for (let j = gridRow; j < gridRow + gridDepth; j++) {
+        if (j < 0 || j >= GRID_SIZE) continue;
+        cells.push([i, j]);
+      }
+    }
+    return cells;
+  }
+
+  function computeTargetYFor(gridCol, gridRow, gridWidth, gridDepth, objHeight) {
+    const cells = footprintIndices(gridCol, gridRow, gridWidth, gridDepth);
     let maxLayer = 0;
-    if (cols.length === 0) return -cubeHalfSize + objHeight / 2;
-    cols.forEach(([i, j]) => {
+    if (cells.length === 0) return -cubeHalfSize + objHeight / 2;
+    cells.forEach(([i, j]) => {
       if (occupancy[i][j] > maxLayer) maxLayer = occupancy[i][j];
     });
     return -cubeHalfSize + objHeight / 2 + maxLayer;
   }
 
-  function spawnFallingObject(x = 0, z = 0) {
-    const group = new THREE.Group();
-    const startY = cubeHalfSize + 2;
-    group.position.set(x, startY, z);
-
-    // Randomly select a shape
+  // gridCol/gridRow are now integer grid indices (the shape's minimum corner),
+  // not world coordinates.
+  function spawnFallingObject(gridCol = 0, gridRow = 0) {
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
 
-    // Create mesh with shape's geometry and color
+    // World-space center, derived from the grid corner + shape size.
+    const worldX = cellCenterWorld(gridCol) + (shape.gridWidth - 1) / 2;
+    const worldZ = cellCenterWorld(gridRow) + (shape.gridDepth - 1) / 2;
+
+    const group = new THREE.Group();
+    const startY = cubeHalfSize + 2;
+    group.position.set(worldX, startY, worldZ);
+
     const mesh = new THREE.Mesh(
       shape.geometry,
       new THREE.MeshStandardMaterial({
@@ -183,7 +191,6 @@ try {
     );
     group.add(mesh);
 
-    // Create outline
     const outline = new THREE.LineSegments(
       new THREE.EdgesGeometry(shape.geometry),
       new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 })
@@ -192,10 +199,8 @@ try {
 
     cubeGroup.add(group);
 
-    // Compute target Y using shape's dimensions
-    const targetY = computeTargetYFor(x, z, shape.halfX, shape.halfZ, shape.height);
+    const targetY = computeTargetYFor(gridCol, gridRow, shape.gridWidth, shape.gridDepth, shape.height);
 
-    // Get bottom corners
     const bottomCornerOffsets = getBottomCornerOffsets(mesh);
     const pathLines = bottomCornerOffsets.map((offset) => {
       const start = new THREE.Vector3(
@@ -212,27 +217,25 @@ try {
       return { line, offset };
     });
 
-    // Store shape reference for later use in animate()
     const obj = {
       group,
       mesh,
       pathLines,
       landed: false,
-      shape: shape
+      shape,
+      gridCol,
+      gridRow
     };
     fallingObjects.push(obj);
     spawnedCount++;
     return obj;
   }
 
-  // Start with one falling object
+  // Start with one falling object (grid corner at col 0, row 2)
   spawnFallingObject(0, 2);
 
   const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fffff, transparent: true, opacity: 0.18 });
-  const gridSize = 6;
-  const gridDivisions = 6;
-
-  const grids = [new THREE.GridHelper(gridSize, gridDivisions, 0x7fe3ff, 0x7fe3ff)];
+  const grids = [new THREE.GridHelper(cubeSize, GRID_SIZE, 0x7fe3ff, 0x7fe3ff)];
   grids.forEach((grid) => {
     grid.material = gridMaterial;
     grid.material.depthWrite = false;
@@ -241,7 +244,6 @@ try {
     cubeGroup.add(grid);
   });
 
-  // Falling animation
   const fallSpeed = 0.02;
   let isDragging = false;
   let lastX = 0;
@@ -276,31 +278,24 @@ try {
       const c = fallingObjects[idx];
       if (c.landed) continue;
 
-      const objX = c.group.position.x;
-      const objZ = c.group.position.z;
-      // Use the object's shape dimensions
-      const targetY = computeTargetYFor(objX, objZ, c.shape.halfX, c.shape.halfZ, c.shape.height);
+      const targetY = computeTargetYFor(c.gridCol, c.gridRow, c.shape.gridWidth, c.shape.gridDepth, c.shape.height);
 
       if (c.group.position.y > targetY) {
         c.group.position.y -= fallSpeed;
       } else {
-        // Land: snap to target and update occupancy
         c.group.position.y = targetY;
         c.landed = true;
-        const cols = footprintIndicesAt(objX, objZ, c.shape.halfX, c.shape.halfZ);
-        cols.forEach(([i, j]) => {
+        const cells = footprintIndices(c.gridCol, c.gridRow, c.shape.gridWidth, c.shape.gridDepth);
+        cells.forEach(([i, j]) => {
           occupancy[i][j] += c.shape.height;
         });
 
-        // Cleanup
         c.pathLines.forEach(({ line }) => cubeGroup.remove(line));
         fallingObjects = fallingObjects.filter(obj => obj !== c);
 
-        // Spawn next object
         if (spawnedCount < 6) spawnFallingObject(1, 0);
       }
 
-      // Update path lines
       c.pathLines.forEach(({ line, offset }) => {
         const start = new THREE.Vector3(
           c.group.position.x + offset.x,

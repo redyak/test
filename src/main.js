@@ -69,16 +69,33 @@ function computeShapeProps(shape) {
   };
 }
 
-function getBottomCornerOffsets(group, shape, shapeProps) {
+function getBottomCornerOffsets(group) {
   const box = new THREE.Box3();
-  group.children.forEach(child => {
-    if (child.geometry) {
+  let hasGeometry = false;
+
+  group.traverse(child => {
+    if (child.isMesh && child.geometry) {
+      child.updateMatrixWorld();
+      if (!child.geometry.boundingBox) {
+        child.geometry.computeBoundingBox();
+      }
       const childBox = child.geometry.boundingBox.clone();
       childBox.applyMatrix4(child.matrixWorld);
       box.expandByPoint(childBox.min);
       box.expandByPoint(childBox.max);
+      hasGeometry = true;
     }
   });
+
+  if (!hasGeometry) {
+    return [
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, 0)
+    ];
+  }
+
   const bottomY = box.min.y;
   return [
     new THREE.Vector3(box.min.x, bottomY, box.min.z),
@@ -147,7 +164,6 @@ try {
     depthTest: false
   });
 
-  // 3D occupancy grid: occupancy[x][z][y] = true if occupied
   const occupancy = Array.from({ length: GRID_SIZE }, () =>
     Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(false))
   );
@@ -177,7 +193,6 @@ try {
     });
 
     if (!valid) return -1000;
-
     return -cubeHalfSize + minBaseY + shapeProps.minY + shapeProps.height / 2;
   }
 
@@ -198,7 +213,9 @@ try {
     };
   }
 
+  // Pre-compute bounding box for unit cube
   const unitCubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+  unitCubeGeometry.computeBoundingBox();
 
   function spawnFallingObject(gridCol = 0, gridRow = 0) {
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
@@ -241,9 +258,10 @@ try {
     });
 
     cubeGroup.add(group);
+    group.updateMatrixWorld(true);
 
     const targetY = computeTargetYFor(gridCol, gridRow, shape, shapeProps);
-    const bottomCornerOffsets = getBottomCornerOffsets(group, shape, shapeProps);
+    const bottomCornerOffsets = getBottomCornerOffsets(group);
 
     const pathLines = bottomCornerOffsets.map((offset) => {
       const start = new THREE.Vector3(
@@ -471,10 +489,8 @@ try {
         c.group.position.y = targetY;
         c.landed = true;
 
-        // Calculate baseY from group position
         const baseY = c.group.position.y + cubeHalfSize - c.shapeProps.minY - c.shapeProps.height / 2;
 
-        // Mark all cube positions as occupied
         c.shape.cubes.forEach(cube => {
           const x = c.gridCol + cube.x - c.shapeProps.minX;
           const z = c.gridRow + cube.z - c.shapeProps.minZ;
@@ -490,7 +506,8 @@ try {
         if (spawnedCount < 6) spawnFallingObject(1, 0);
       }
 
-      const bottomCornerOffsets = getBottomCornerOffsets(c.group, c.shape, c.shapeProps);
+      c.group.updateMatrixWorld(true);
+      const bottomCornerOffsets = getBottomCornerOffsets(c.group);
       c.pathLines.forEach(({ line }, index) => {
         const offset = bottomCornerOffsets[index] || bottomCornerOffsets[0];
         const start = new THREE.Vector3(

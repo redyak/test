@@ -508,7 +508,7 @@ try {
         c.pathLines.forEach(({ line }) => cubeGroup.remove(line));
         fallingObjects = fallingObjects.filter(obj => obj !== c);
 
-        if (spawnedCount < 6) spawnFallingObject(1, 0);
+        if (spawnedCount < 11) spawnFallingObject(1, 0);
       }
 
       c.group.updateMatrixWorld(true);

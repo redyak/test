@@ -110,25 +110,24 @@ function getBottomCornerOffsets(group) {
 }
 
 try {
-  
   const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#0a1128');
+  scene.background = new THREE.Color('#0a1128');
 
-      const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(15, 10, 15);
-          camera.lookAt(0, 0, 0);
+  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(15, 10, 15);
+  camera.lookAt(0, 0, 0);
 
-            const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-              renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-                    const ambientLight = new THREE.AmbientLight(0xa6c1ff, 1.1);
-                      scene.add(ambientLight);
+  const ambientLight = new THREE.AmbientLight(0xa6c1ff, 1.1);
+  scene.add(ambientLight);
 
-                        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.6);
-                          directionalLight.position.set(6, 10, 8);
-                            scene.add(directionalLight);
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.6);
+  directionalLight.position.set(6, 10, 8);
+  scene.add(directionalLight);
 
   const cubeGroup = new THREE.Group();
   scene.add(cubeGroup);
@@ -151,10 +150,10 @@ try {
   cubeGroup.add(cube);
 
   const outline = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize)),
-            new THREE.LineBasicMaterial({ color: 0x8fe8ff, transparent: true, opacity: 0.85 })
-              );
-    cubeGroup.add(outline);
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize)),
+    new THREE.LineBasicMaterial({ color: 0x8fe8ff, transparent: true, opacity: 0.85 })
+  );
+  cubeGroup.add(outline);
 
   let fallingObjects = [];
   let spawnedCount = 0;
@@ -249,25 +248,14 @@ try {
     });
   }
 
-  function spawnFallingObject(gridCol = 0, gridRow = 0) {
-    const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-    const shapeProps = computeShapeProps(shape);
-    const { x: worldX, z: worldZ } = gridToWorldXZ(gridCol, gridRow);
-
-    const group = new THREE.Group();
-    const startY = cubeHalfSize + SPAWN_HEIGHT_OFFSET;
-    group.position.set(worldX, startY, worldZ);
-
-    const material = new THREE.MeshStandardMaterial({
-      color: shape.color,
-      emissive: 0x144b7a,
-      emissiveIntensity: 0.45,
-      roughness: 0.2,
-      metalness: 0.3
-    });
-
-    // Build each cube's fill mesh and wireframe outline together.
-    shape.cubes.forEach(cube => {
+  // Builds (or rebuilds) the fill + outline meshes for a shape's cubes
+  // inside the given group. Clears any existing children first, so this
+  // can be called again after a rotation changes the cube list.
+  function buildShapeMeshes(group, cubes, shapeProps, material) {
+    while (group.children.length) {
+      group.remove(group.children[0]);
+    }
+    cubes.forEach(cube => {
       const position = [
         cube.x - shapeProps.minX,
         cube.y - shapeProps.minY,
@@ -285,6 +273,32 @@ try {
       cubeOutline.position.set(...position);
       group.add(cubeOutline);
     });
+  }
+
+  function spawnFallingObject(gridCol = 0, gridRow = 0) {
+    const template = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+    // Clone so rotating this instance never mutates the shared template.
+    const shape = {
+      name: template.name,
+      color: template.color,
+      cubes: template.cubes.map(c => ({ ...c }))
+    };
+    const shapeProps = computeShapeProps(shape);
+    const { x: worldX, z: worldZ } = gridToWorldXZ(gridCol, gridRow);
+
+    const group = new THREE.Group();
+    const startY = cubeHalfSize + SPAWN_HEIGHT_OFFSET;
+    group.position.set(worldX, startY, worldZ);
+
+    const material = new THREE.MeshStandardMaterial({
+      color: shape.color,
+      emissive: 0x144b7a,
+      emissiveIntensity: 0.45,
+      roughness: 0.2,
+      metalness: 0.3
+    });
+
+    buildShapeMeshes(group, shape.cubes, shapeProps, material);
 
     cubeGroup.add(group);
     group.updateMatrixWorld(true);
@@ -310,6 +324,7 @@ try {
 
     const obj = {
       group,
+      material,
       pathLines,
       landed: false,
       shape,
@@ -347,29 +362,79 @@ try {
     return true;
   }
 
+  // Rotates a shape's cube list 90 degrees around 'y' or 'x' axis.
+  // dir: +1 or -1 for direction of rotation.
+  function rotateCubesAroundAxis(cubes, axis, dir) {
+    return cubes.map(c => {
+      if (axis === 'y') {
+        return dir > 0
+          ? { x: -c.z, y: c.y, z: c.x }
+          : { x: c.z, y: c.y, z: -c.x };
+      }
+      // axis === 'x'
+      return dir > 0
+        ? { x: c.x, y: -c.z, z: c.y }
+        : { x: c.x, y: c.z, z: -c.y };
+    });
+  }
+
+  function tryRotateFallingObject(obj, axis, dir) {
+    if (!obj || obj.landed) return false;
+
+    const newCubes = rotateCubesAroundAxis(obj.shape.cubes, axis, dir);
+    const newShapeProps = computeShapeProps({ cubes: newCubes });
+
+    if (!fitsInGrid(obj.gridCol, obj.gridRow, { cubes: newCubes }, newShapeProps)) {
+      return false;
+    }
+
+    const gridBaseY = computeTargetYFor(obj.gridCol, obj.gridRow, { cubes: newCubes }, newShapeProps);
+    if (gridBaseY < 0) return false;
+
+    obj.shape.cubes = newCubes;
+    obj.shapeProps = newShapeProps;
+    obj.gridBaseY = gridBaseY;
+    buildShapeMeshes(obj.group, newCubes, newShapeProps, obj.material);
+
+    // If the rotation raises the resting height, snap up so the shape
+    // doesn't visually clip through the block it now rests on.
+    const worldTargetY = gridBaseY - cubeHalfSize + 0.5;
+    if (obj.group.position.y < worldTargetY) {
+      obj.group.position.y = worldTargetY;
+    }
+
+    return true;
+  }
+
   spawnFallingObject(0, 2);
 
   const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fffff, transparent: true, opacity: 0.3 });
-    const grids = [new THREE.GridHelper(cubeSize, GRID_SIZE, 0x7fe3ff, 0x7fe3ff)];
-      grids.forEach((grid) => {
-          grid.material = gridMaterial;
-              grid.material.depthWrite = false;
-                  grid.material.opacity = 0.28;
-                      grid.material.transparent = true;
-                          cubeGroup.add(grid);
-                            });
+  const grids = [new THREE.GridHelper(cubeSize, GRID_SIZE, 0x7fe3ff, 0x7fe3ff)];
+  grids.forEach((grid) => {
+    grid.material = gridMaterial;
+    grid.material.depthWrite = false;
+    grid.material.opacity = 0.28;
+    grid.material.transparent = true;
+    cubeGroup.add(grid);
+  });
 
-  // ========== CUBE ROTATION ZONE ==========
+  // ========== FALLING-SHAPE MOVE ZONE ==========
   const rotationZone = document.createElement('div');
   rotationZone.id = 'rotation-zone';
-  rotationZone.setAttribute('aria-label', 'Rotate cube left or right');
+  rotationZone.setAttribute('aria-label', 'Move falling shape left, right, forward, or back');
   rotationZone.innerHTML = `
     <svg viewBox="0 0 48 48" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
-      <path d="M20 31L24 35L20 39" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-      <path d="M32 34.1679C39.0636 32.6248 44 29.1006 44 25C44 19.4772 35.0457 15 24 15C12.9543 15 4 19.4772 4 25C4 30.5228 12.9543 35 24 35" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <g id="move-arrows" style="transform-origin: 24px 24px;">
+        <path d="M14 24H4M4 24L9 19M4 24L9 29" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <path d="M34 24H44M44 24L39 19M44 24L39 29" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <path d="M24 14V4M24 4L19 9M24 4L29 9" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <path d="M24 34V44M24 44L19 39M24 44L29 39" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </g>
     </svg>
   `;
   document.body.appendChild(rotationZone);
+
+  const moveArrowsGroup = rotationZone.querySelector('#move-arrows');
 
   const rotationZoneStyle = document.createElement('style');
   rotationZoneStyle.textContent = `
@@ -394,32 +459,43 @@ try {
   `;
   document.head.appendChild(rotationZoneStyle);
 
-  let isDragging = false;
-  let lastX = 0;
+  // ========== ROTATE-OBJECT ZONE (90 deg turns around Y or X) ==========
+  const rotateObjectZone = document.createElement('div');
+  rotateObjectZone.id = 'rotate-object-zone';
+  rotateObjectZone.setAttribute('aria-label', 'Swipe horizontally or vertically to rotate falling shape');
+  rotateObjectZone.innerHTML = `
+    <svg viewBox="0 0 48 48" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+      <path d="M34 10C30.8 7.8 27 6.5 23 6.5C13.6 6.5 6 14.1 6 23.5C6 26.4 6.7 29.1 8 31.5" stroke="#ffb84d" stroke-width="4" stroke-linecap="round" fill="none"/>
+      <path d="M8 31.5L8 24M8 31.5L15 29.5" stroke="#ffb84d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M14 38C17.2 40.2 21 41.5 25 41.5C34.4 41.5 42 33.9 42 24.5C42 21.6 41.3 18.9 40 16.5" stroke="#ffb84d" stroke-width="4" stroke-linecap="round" fill="none"/>
+      <path d="M40 16.5L40 24M40 16.5L33 18.5" stroke="#ffb84d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>
+  `;
+  document.body.appendChild(rotateObjectZone);
 
-  rotationZone.addEventListener('pointerdown', (event) => {
-    isDragging = true;
-    lastX = event.clientX;
-    rotationZone.style.cursor = 'grabbing';
-    rotationZone.setPointerCapture(event.pointerId);
-  });
+  const rotateObjectZoneStyle = document.createElement('style');
+  rotateObjectZoneStyle.textContent = `
+    #rotate-object-zone {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      width: 90px;
+      height: 90px;
+      z-index: 10;
+      cursor: grab;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+      opacity: 0.5;
+      transition: opacity 0.15s ease;
+    }
+    #rotate-object-zone:hover,
+    #rotate-object-zone:active {
+      opacity: 0.95;
+    }
+  `;
+  document.head.appendChild(rotateObjectZoneStyle);
 
-  rotationZone.addEventListener('pointermove', (event) => {
-    if (!isDragging) return;
-    const deltaX = event.clientX - lastX;
-    cubeGroup.rotation.y += deltaX * 0.01;
-    lastX = event.clientX;
-  });
-
-  const stopDragging = () => {
-    isDragging = false;
-    rotationZone.style.cursor = 'grab';
-  };
-  rotationZone.addEventListener('pointerup', stopDragging);
-  rotationZone.addEventListener('pointercancel', stopDragging);
-  rotationZone.addEventListener('pointerleave', stopDragging);
-
-  // ========== FALLING-OBJECT DRAG ==========
+  // ========== FALLING-OBJECT DRAG (move zone: swipe to shift the piece) ==========
   function worldToScreen(vec3) {
     const v = vec3.clone().project(camera);
     const w = renderer.domElement.clientWidth;
@@ -432,7 +508,7 @@ try {
 
   let objectDrag = null;
 
-  canvas.addEventListener('pointerdown', (event) => {
+  rotationZone.addEventListener('pointerdown', (event) => {
     const obj = fallingObjects.find(o => !o.landed);
     if (!obj) return;
     objectDrag = {
@@ -443,16 +519,16 @@ try {
       sign: 0,
       applied: false
     };
-    canvas.style.cursor = 'grabbing';
-    canvas.setPointerCapture(event.pointerId);
+    rotationZone.style.cursor = 'grabbing';
+    rotationZone.setPointerCapture(event.pointerId);
   });
 
-  canvas.addEventListener('pointermove', (event) => {
+  rotationZone.addEventListener('pointermove', (event) => {
     if (!objectDrag) return;
     const { obj } = objectDrag;
     if (obj.landed) {
       objectDrag = null;
-      canvas.style.cursor = 'grab';
+      rotationZone.style.cursor = 'grab';
       return;
     }
 
@@ -503,15 +579,119 @@ try {
 
   const stopObjectDrag = () => {
     objectDrag = null;
+    rotationZone.style.cursor = 'grab';
+  };
+  rotationZone.addEventListener('pointerup', stopObjectDrag);
+  rotationZone.addEventListener('pointercancel', stopObjectDrag);
+  rotationZone.addEventListener('pointerleave', stopObjectDrag);
+
+  // ========== ROTATE-OBJECT DRAG (rotate zone: swipe to spin the piece) ==========
+  const ROTATE_DRAG_LOCK_PX = 12;
+  const ROTATE_DRAG_MOVE_PX = 45;
+
+  let rotateDrag = null;
+
+  rotateObjectZone.addEventListener('pointerdown', (event) => {
+    const obj = fallingObjects.find(o => !o.landed);
+    if (!obj) return;
+    rotateDrag = {
+      obj,
+      startX: event.clientX,
+      startY: event.clientY,
+      axis: null,
+      sign: 0,
+      applied: false
+    };
+    rotateObjectZone.style.cursor = 'grabbing';
+    rotateObjectZone.setPointerCapture(event.pointerId);
+  });
+
+  rotateObjectZone.addEventListener('pointermove', (event) => {
+    if (!rotateDrag) return;
+    const { obj } = rotateDrag;
+    if (obj.landed) {
+      rotateDrag = null;
+      rotateObjectZone.style.cursor = 'grab';
+      return;
+    }
+
+    const deltaX = event.clientX - rotateDrag.startX;
+    const deltaY = event.clientY - rotateDrag.startY;
+
+    if (!rotateDrag.axis) {
+      if (Math.hypot(deltaX, deltaY) < ROTATE_DRAG_LOCK_PX) return;
+      if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+        rotateDrag.axis = 'y';
+        rotateDrag.sign = deltaX >= 0 ? 1 : -1;
+      } else {
+        rotateDrag.axis = 'x';
+        rotateDrag.sign = deltaY >= 0 ? 1 : -1;
+      }
+    }
+
+    if (!rotateDrag.applied && Math.hypot(deltaX, deltaY) >= ROTATE_DRAG_MOVE_PX) {
+      tryRotateFallingObject(obj, rotateDrag.axis, rotateDrag.sign);
+      rotateDrag.applied = true;
+    }
+  });
+
+  const stopRotateDrag = () => {
+    rotateDrag = null;
+    rotateObjectZone.style.cursor = 'grab';
+  };
+  rotateObjectZone.addEventListener('pointerup', stopRotateDrag);
+  rotateObjectZone.addEventListener('pointercancel', stopRotateDrag);
+  rotateObjectZone.addEventListener('pointerleave', stopRotateDrag);
+  rotateObjectZone.style.cursor = 'grab';
+
+  // ========== CUBE ROTATION (swipe anywhere on canvas) ==========
+  let isDragging = false;
+  let lastX = 0;
+
+  canvas.addEventListener('pointerdown', (event) => {
+    isDragging = true;
+    lastX = event.clientX;
+    canvas.style.cursor = 'grabbing';
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener('pointermove', (event) => {
+    if (!isDragging) return;
+    const deltaX = event.clientX - lastX;
+    cubeGroup.rotation.y += deltaX * 0.01;
+    lastX = event.clientX;
+  });
+
+  const stopDragging = () => {
+    isDragging = false;
     canvas.style.cursor = 'grab';
   };
-  canvas.addEventListener('pointerup', stopObjectDrag);
-  canvas.addEventListener('pointercancel', stopObjectDrag);
-  canvas.addEventListener('pointerleave', stopObjectDrag);
+  canvas.addEventListener('pointerup', stopDragging);
+  canvas.addEventListener('pointercancel', stopDragging);
+  canvas.addEventListener('pointerleave', stopDragging);
   canvas.style.cursor = 'grab';
 
   function animate() {
     requestAnimationFrame(animate);
+
+    // Keep the move-zone icon's arrows aligned with the actual on-screen
+    // column direction, derived the same way the drag handler computes it.
+    if (moveArrowsGroup) {
+      const obj = fallingObjects.find(o => !o.landed);
+      if (obj) {
+        const originWorld = obj.group.getWorldPosition(new THREE.Vector3());
+        const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(cubeGroup.quaternion);
+
+        const originScreen = worldToScreen(originWorld);
+        const xScreen = worldToScreen(originWorld.clone().add(localX));
+
+        const screenAngle = Math.atan2(
+          xScreen.y - originScreen.y,
+          xScreen.x - originScreen.x
+        );
+        moveArrowsGroup.style.transform = `rotate(${screenAngle}rad)`;
+      }
+    }
 
     for (let idx = 0; idx < fallingObjects.length; idx++) {
       const c = fallingObjects[idx];
@@ -566,4 +746,4 @@ try {
 } catch (err) {
   const errMsg = err && err.message ? err.message : String(err);
   setError(errMsg);
-                        }
+}

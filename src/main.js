@@ -9,6 +9,10 @@ function setError(msg) {
 }
 
 const GRID_SIZE = 6;
+const MAX_SHAPES = 11;
+const FALL_SPEED = 0.02;
+const SPAWN_HEIGHT_OFFSET = 2;
+const DEBUG = false;
 
 const SHAPES = [
   {
@@ -173,41 +177,40 @@ try {
     return index - cubeHalfSize + 0.5;
   }
 
-function shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, baseY) {
+  function shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, baseY) {
     for (const cube of shape.cubes) {
-        const x = gridCol + cube.x - shapeProps.minX;
-            const z = gridRow + cube.z - shapeProps.minZ;
-                const y = baseY + cube.y - shapeProps.minY;
-                    if (y < 0 || y >= GRID_SIZE) return true;   // out of vertical bounds = blocked
-                        if (occupancy[x][z][y]) return true;         // collides with existing block
-                          }
-                            return false;
-                            }
+      const x = gridCol + cube.x - shapeProps.minX;
+      const z = gridRow + cube.z - shapeProps.minZ;
+      const y = baseY + cube.y - shapeProps.minY;
+      if (y < 0 || y >= GRID_SIZE) return true;   // out of vertical bounds = blocked
+      if (occupancy[x][z][y]) return true;         // collides with existing block
+    }
+    return false;
+  }
 
-                            function computeTargetYFor(gridCol, gridRow, shape, shapeProps) {
-                              // horizontal bounds check
-                                for (const cube of shape.cubes) {
-                                    const x = gridCol + cube.x - shapeProps.minX;
-                                        const z = gridRow + cube.z - shapeProps.minZ;
-                                            if (x < 0 || x >= GRID_SIZE || z < 0 || z >= GRID_SIZE) return -1;
-                                              }
+  function computeTargetYFor(gridCol, gridRow, shape, shapeProps) {
+    // horizontal bounds check
+    for (const cube of shape.cubes) {
+      const x = gridCol + cube.x - shapeProps.minX;
+      const z = gridRow + cube.z - shapeProps.minZ;
+      if (x < 0 || x >= GRID_SIZE || z < 0 || z >= GRID_SIZE) return -1;
+    }
 
-                                                const shapeHeight = shapeProps.maxY - shapeProps.minY + 1;
-                                                  const topBase = GRID_SIZE - shapeHeight;
-                                                    if (topBase < 0) return -1;
+    const shapeHeight = shapeProps.maxY - shapeProps.minY + 1;
+    const topBase = GRID_SIZE - shapeHeight;
+    if (topBase < 0) return -1;
 
-                                                      // If it's blocked even at the very top, the column is full.
-                                                        if (shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, topBase)) return -1;
+    // If it's blocked even at the very top, the column is full.
+    if (shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, topBase)) return -1;
 
-                                                          // Simulate falling: start at the top and descend until one more step
-                                                            // down would cause a collision (or we hit the floor).
-                                                              let base = topBase;
-                                                                while (base > 0 && !shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, base - 1)) {
-                                                                    base--;
-                                                                      }
-                                                                        return base;
-                                                                        }
-
+    // Simulate falling: start at the top and descend until one more step
+    // down would cause a collision (or we hit the floor).
+    let base = topBase;
+    while (base > 0 && !shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, base - 1)) {
+      base--;
+    }
+    return base;
+  }
 
   function fitsInGrid(gridCol, gridRow, shape, shapeProps) {
     return shape.cubes.every(cube => {
@@ -228,13 +231,31 @@ function shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, baseY) {
   const unitCubeGeometry = new THREE.BoxGeometry(1, 1, 1);
   unitCubeGeometry.computeBoundingBox();
 
+  // Updates each path line to run from the shape's current bottom corners
+  // down to its landing height.
+  function updatePathLines(obj, worldTargetY) {
+    obj.group.updateMatrixWorld(true);
+    const bottomCornerOffsets = getBottomCornerOffsets(obj.group);
+    obj.pathLines.forEach(({ line }, index) => {
+      const offset = bottomCornerOffsets[index] || bottomCornerOffsets[0];
+      const start = new THREE.Vector3(
+        obj.group.position.x + offset.x,
+        obj.group.position.y + offset.y,
+        obj.group.position.z + offset.z
+      );
+      const end = new THREE.Vector3(start.x, worldTargetY, start.z);
+      line.geometry.setFromPoints([start, end]);
+      line.computeLineDistances?.();
+    });
+  }
+
   function spawnFallingObject(gridCol = 0, gridRow = 0) {
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
     const shapeProps = computeShapeProps(shape);
     const { x: worldX, z: worldZ } = gridToWorldXZ(gridCol, gridRow);
 
     const group = new THREE.Group();
-    const startY = cubeHalfSize + 2;
+    const startY = cubeHalfSize + SPAWN_HEIGHT_OFFSET;
     group.position.set(worldX, startY, worldZ);
 
     const material = new THREE.MeshStandardMaterial({
@@ -245,26 +266,23 @@ function shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, baseY) {
       metalness: 0.3
     });
 
+    // Build each cube's fill mesh and wireframe outline together.
     shape.cubes.forEach(cube => {
-      const mesh = new THREE.Mesh(unitCubeGeometry, material);
-      mesh.position.set(
+      const position = [
         cube.x - shapeProps.minX,
         cube.y - shapeProps.minY,
         cube.z - shapeProps.minZ
-      );
-      group.add(mesh);
-    });
+      ];
 
-    shape.cubes.forEach(cube => {
+      const mesh = new THREE.Mesh(unitCubeGeometry, material);
+      mesh.position.set(...position);
+      group.add(mesh);
+
       const cubeOutline = new THREE.LineSegments(
         new THREE.EdgesGeometry(unitCubeGeometry),
         new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 })
       );
-      cubeOutline.position.set(
-        cube.x - shapeProps.minX,
-        cube.y - shapeProps.minY,
-        cube.z - shapeProps.minZ
-      );
+      cubeOutline.position.set(...position);
       group.add(cubeOutline);
     });
 
@@ -275,7 +293,6 @@ function shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, baseY) {
     const worldTargetY = gridBaseY - cubeHalfSize + 0.5;
 
     const bottomCornerOffsets = getBottomCornerOffsets(group);
-
     const pathLines = bottomCornerOffsets.map((offset) => {
       const start = new THREE.Vector3(
         group.position.x + offset.x,
@@ -299,37 +316,36 @@ function shapeOverlapsAt(gridCol, gridRow, shape, shapeProps, baseY) {
       shapeProps,
       gridCol,
       gridRow,
-      gridBaseY: gridBaseY
+      gridBaseY
     };
     fallingObjects.push(obj);
     spawnedCount++;
     return obj;
   }
 
-function tryMoveFallingObject(obj, dCol, dRow) {
+  function tryMoveFallingObject(obj, dCol, dRow) {
     if (!obj || obj.landed) return false;
-      const newCol = obj.gridCol + dCol;
-        const newRow = obj.gridRow + dRow;
-          if (!fitsInGrid(newCol, newRow, obj.shape, obj.shapeProps)) return false;
+    const newCol = obj.gridCol + dCol;
+    const newRow = obj.gridRow + dRow;
+    if (!fitsInGrid(newCol, newRow, obj.shape, obj.shapeProps)) return false;
 
-            // Approximate the shape's current base grid-y from its world position.
-              const currentBaseY = Math.round(obj.group.position.y + cubeHalfSize - 0.5);
-                if (shapeOverlapsAt(newCol, newRow, obj.shape, obj.shapeProps, currentBaseY)) {
-                    return false; // would clip through a block at the current height
-                      }
+    // Reject a sideways move that would clip through a block at the
+    // shape's current height (e.g. sliding under an overhang).
+    if (shapeOverlapsAt(newCol, newRow, obj.shape, obj.shapeProps, obj.gridBaseY)) {
+      return false;
+    }
 
-                        const gridBaseY = computeTargetYFor(newCol, newRow, obj.shape, obj.shapeProps);
-                          if (gridBaseY < 0) return false;
+    const gridBaseY = computeTargetYFor(newCol, newRow, obj.shape, obj.shapeProps);
+    if (gridBaseY < 0) return false;
 
-                            obj.gridCol = newCol;
-                              obj.gridRow = newRow;
-                                obj.gridBaseY = gridBaseY;
-                                  const { x, z } = gridToWorldXZ(newCol, newRow);
-                                    obj.group.position.x = x;
-                                      obj.group.position.z = z;
-                                        return true;
-                                        }
-
+    obj.gridCol = newCol;
+    obj.gridRow = newRow;
+    obj.gridBaseY = gridBaseY;
+    const { x, z } = gridToWorldXZ(newCol, newRow);
+    obj.group.position.x = x;
+    obj.group.position.z = z;
+    return true;
+  }
 
   spawnFallingObject(0, 2);
 
@@ -494,8 +510,6 @@ function tryMoveFallingObject(obj, dCol, dRow) {
   canvas.addEventListener('pointerleave', stopObjectDrag);
   canvas.style.cursor = 'grab';
 
-  const fallSpeed = 0.02;
-
   function animate() {
     requestAnimationFrame(animate);
 
@@ -509,7 +523,7 @@ function tryMoveFallingObject(obj, dCol, dRow) {
       c.gridBaseY = gridBaseY;
 
       if (c.group.position.y > worldTargetY) {
-        c.group.position.y -= fallSpeed;
+        c.group.position.y -= FALL_SPEED;
       } else {
         c.group.position.y = worldTargetY;
         c.landed = true;
@@ -527,22 +541,10 @@ function tryMoveFallingObject(obj, dCol, dRow) {
         c.pathLines.forEach(({ line }) => cubeGroup.remove(line));
         fallingObjects = fallingObjects.filter(obj => obj !== c);
 
-        if (spawnedCount < 11) spawnFallingObject(1, 0);
+        if (spawnedCount < MAX_SHAPES) spawnFallingObject(1, 0);
       }
 
-      c.group.updateMatrixWorld(true);
-      const bottomCornerOffsets = getBottomCornerOffsets(c.group);
-      c.pathLines.forEach(({ line }, index) => {
-        const offset = bottomCornerOffsets[index] || bottomCornerOffsets[0];
-        const start = new THREE.Vector3(
-          c.group.position.x + offset.x,
-          c.group.position.y + offset.y,
-          c.group.position.z + offset.z
-        );
-        const end = new THREE.Vector3(start.x, worldTargetY, start.z);
-        line.geometry.setFromPoints([start, end]);
-        line.computeLineDistances?.();
-      });
+      updatePathLines(c, worldTargetY);
     }
 
     renderer.render(scene, camera);
@@ -556,10 +558,12 @@ function tryMoveFallingObject(obj, dCol, dRow) {
 
   scoreEl.textContent = 'Shapes falling...';
   animate();
+
+  if (DEBUG) {
+    window.__occupancy = occupancy;
+    window.__fallingObjects = fallingObjects;
+  }
 } catch (err) {
   const errMsg = err && err.message ? err.message : String(err);
   setError(errMsg);
-}
-
-window.__occupancy = occupancy;
-window.__fallingObjects = fallingObjects;
+                        }

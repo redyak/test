@@ -110,25 +110,25 @@ function getBottomCornerOffsets(group) {
 }
 
 try {
+  
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#040816');
-  scene.fog = new THREE.Fog('#040816', 10, 30);
+    scene.background = new THREE.Color('#0a1128');
 
-  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
-  camera.position.set(15, 10, 15);
-  camera.lookAt(0, 0, 0);
+      const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(15, 10, 15);
+          camera.lookAt(0, 0, 0);
 
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
+            const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+              renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  const ambientLight = new THREE.AmbientLight(0xa6c1ff, 0.9);
-  scene.add(ambientLight);
+                    const ambientLight = new THREE.AmbientLight(0xa6c1ff, 1.1);
+                      scene.add(ambientLight);
 
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-  directionalLight.position.set(6, 10, 8);
-  scene.add(directionalLight);
+                        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.6);
+                          directionalLight.position.set(6, 10, 8);
+                            scene.add(directionalLight);
 
   const cubeGroup = new THREE.Group();
   scene.add(cubeGroup);
@@ -151,10 +151,10 @@ try {
   cubeGroup.add(cube);
 
   const outline = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize)),
-    new THREE.LineBasicMaterial({ color: 0x8fe8ff, transparent: true, opacity: 0.6 })
-  );
-  cubeGroup.add(outline);
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize)),
+            new THREE.LineBasicMaterial({ color: 0x8fe8ff, transparent: true, opacity: 0.85 })
+              );
+    cubeGroup.add(outline);
 
   let fallingObjects = [];
   let spawnedCount = 0;
@@ -349,15 +349,15 @@ try {
 
   spawnFallingObject(0, 2);
 
-  const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fffff, transparent: true, opacity: 0.18 });
-  const grids = [new THREE.GridHelper(cubeSize, GRID_SIZE, 0x7fe3ff, 0x7fe3ff)];
-  grids.forEach((grid) => {
-    grid.material = gridMaterial;
-    grid.material.depthWrite = false;
-    grid.material.opacity = 0.16;
-    grid.material.transparent = true;
-    cubeGroup.add(grid);
-  });
+  const gridMaterial = new THREE.LineBasicMaterial({ color: 0x7fffff, transparent: true, opacity: 0.3 });
+    const grids = [new THREE.GridHelper(cubeSize, GRID_SIZE, 0x7fe3ff, 0x7fe3ff)];
+      grids.forEach((grid) => {
+          grid.material = gridMaterial;
+              grid.material.depthWrite = false;
+                  grid.material.opacity = 0.28;
+                      grid.material.transparent = true;
+                          cubeGroup.add(grid);
+                            });
 
   // ========== CUBE ROTATION ZONE ==========
   const rotationZone = document.createElement('div');

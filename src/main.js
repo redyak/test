@@ -12,6 +12,7 @@ const GRID_SIZE = 6;
 const MAX_SHAPES = 11;
 const FALL_SPEED = 0.02;
 const SPAWN_HEIGHT_OFFSET = 2;
+const CUBE_ROTATE_DURATION_MS = 300;
 const DEBUG = false;
 
 const SHAPES = [
@@ -93,6 +94,10 @@ function computeLocalBottomCorners(shapeProps) {
     new THREE.Vector3(maxX, bottomY, maxZ),
     new THREE.Vector3(minX, bottomY, maxZ)
   ];
+}
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
 }
 
 try {
@@ -404,23 +409,33 @@ try {
     cubeGroup.add(grid);
   });
 
-  // ========== FALLING-SHAPE MOVE ZONE ==========
+  // ========== FALLING-SHAPE MOVE ZONE (tap arrows) ==========
   const rotationZone = document.createElement('div');
   rotationZone.id = 'rotation-zone';
-  rotationZone.setAttribute('aria-label', 'Move falling shape left, right, forward, or back');
-  rotationZone.innerHTML = `
-    <svg viewBox="0 0 48 48" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
-      <g id="move-arrows" style="transform-origin: 24px 24px;">
-        <path d="M14 24H4M4 24L9 19M4 24L9 29" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <path d="M34 24H44M44 24L39 19M44 24L39 29" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <path d="M24 14V4M24 4L19 9M24 4L29 9" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <path d="M24 34V44M24 44L19 39M24 44L29 39" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-      </g>
-    </svg>
-  `;
-  document.body.appendChild(rotationZone);
 
-  const moveArrowsGroup = rotationZone.querySelector('#move-arrows');
+  function arrowButton(id, label, pathD) {
+    const btn = document.createElement('button');
+    btn.id = id;
+    btn.className = 'move-arrow-btn';
+    btn.setAttribute('aria-label', label);
+    btn.innerHTML = `
+      <svg viewBox="0 0 32 32" width="100%" height="100%">
+        <path d="${pathD}" stroke="#8fe8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+    `;
+    return btn;
+  }
+
+  const moveLeftBtn = arrowButton('move-left', 'Move shape left', 'M20 8L10 16L20 24');
+  const moveRightBtn = arrowButton('move-right', 'Move shape right', 'M12 8L22 16L12 24');
+  const moveUpBtn = arrowButton('move-up', 'Move shape forward', 'M8 20L16 10L24 20');
+  const moveDownBtn = arrowButton('move-down', 'Move shape backward', 'M8 12L16 22L24 12');
+
+  rotationZone.appendChild(moveLeftBtn);
+  rotationZone.appendChild(moveRightBtn);
+  rotationZone.appendChild(moveUpBtn);
+  rotationZone.appendChild(moveDownBtn);
+  document.body.appendChild(rotationZone);
 
   const rotationZoneStyle = document.createElement('style');
   rotationZoneStyle.textContent = `
@@ -429,19 +444,33 @@ try {
       left: 50%;
       bottom: 20px;
       transform: translateX(-50%);
-      width: 200px;
-      height: 70px;
+      width: 160px;
+      height: 160px;
       z-index: 10;
-      cursor: grab;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: 1fr 1fr 1fr;
       touch-action: none;
+    }
+    .move-arrow-btn {
+      background: rgba(20, 30, 55, 0.55);
+      border: 1px solid rgba(143, 232, 255, 0.4);
+      border-radius: 10px;
+      padding: 0;
+      cursor: pointer;
+      opacity: 0.6;
+      transition: opacity 0.15s ease, background 0.15s ease;
       -webkit-tap-highlight-color: transparent;
-      opacity: 0.5;
-      transition: opacity 0.15s ease;
     }
-    #rotation-zone:hover,
-    #rotation-zone:active {
-      opacity: 0.95;
+    .move-arrow-btn:hover,
+    .move-arrow-btn:active {
+      opacity: 1;
+      background: rgba(20, 30, 55, 0.85);
     }
+    #move-up    { grid-column: 2; grid-row: 1; }
+    #move-left  { grid-column: 1; grid-row: 2; }
+    #move-right { grid-column: 3; grid-row: 2; }
+    #move-down  { grid-column: 2; grid-row: 3; }
   `;
   document.head.appendChild(rotationZoneStyle);
 
@@ -481,7 +510,7 @@ try {
   `;
   document.head.appendChild(rotateObjectZoneStyle);
 
-  // ========== FALLING-OBJECT DRAG (move zone: swipe to shift the piece) ==========
+  // ========== FALLING-OBJECT TAP-TO-MOVE ==========
   function worldToScreen(vec3) {
     const v = vec3.clone().project(camera);
     const w = renderer.domElement.clientWidth;
@@ -489,87 +518,56 @@ try {
     return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h };
   }
 
-  const OBJECT_DRAG_LOCK_PX = 12;
-  const OBJECT_DRAG_MOVE_PX = 55;
+  // Given a fixed screen-space direction (e.g. left = {x:-1,y:0}), figures out
+  // which grid axis (column or row) currently points closest to that screen
+  // direction — since the cube's rotation determines which grid axis maps to
+  // "screen left" at any given moment — then moves the falling shape one step
+  // along that axis.
+  function moveInScreenDirection(obj, screenDir) {
+    if (!obj || obj.landed) return false;
 
-  let objectDrag = null;
+    const originWorld = obj.group.getWorldPosition(new THREE.Vector3());
+    const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(cubeGroup.quaternion);
+    const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(cubeGroup.quaternion);
 
-  rotationZone.addEventListener('pointerdown', (event) => {
+    const originScreen = worldToScreen(originWorld);
+    const xScreen = worldToScreen(originWorld.clone().add(localX));
+    const zScreen = worldToScreen(originWorld.clone().add(localZ));
+
+    const dirCol = { x: xScreen.x - originScreen.x, y: xScreen.y - originScreen.y };
+    const dirRow = { x: zScreen.x - originScreen.x, y: zScreen.y - originScreen.y };
+
+    const normalize = (v) => {
+      const len = Math.hypot(v.x, v.y) || 1;
+      return { x: v.x / len, y: v.y / len };
+    };
+    const nCol = normalize(dirCol);
+    const nRow = normalize(dirRow);
+    const nScreen = normalize(screenDir);
+
+    const dotCol = nScreen.x * nCol.x + nScreen.y * nCol.y;
+    const dotRow = nScreen.x * nRow.x + nScreen.y * nRow.y;
+
+    let dCol = 0, dRow = 0;
+    if (Math.abs(dotCol) >= Math.abs(dotRow)) {
+      dCol = dotCol >= 0 ? 1 : -1;
+    } else {
+      dRow = dotRow >= 0 ? 1 : -1;
+    }
+
+    return tryMoveFallingObject(obj, dCol, dRow);
+  }
+
+  function handleMoveTap(screenDir) {
     const obj = fallingObjects.find(o => !o.landed);
     if (!obj) return;
-    objectDrag = {
-      obj,
-      startX: event.clientX,
-      startY: event.clientY,
-      axis: null,
-      sign: 0,
-      applied: false
-    };
-    rotationZone.style.cursor = 'grabbing';
-    rotationZone.setPointerCapture(event.pointerId);
-  });
+    moveInScreenDirection(obj, screenDir);
+  }
 
-  rotationZone.addEventListener('pointermove', (event) => {
-    if (!objectDrag) return;
-    const { obj } = objectDrag;
-    if (obj.landed) {
-      objectDrag = null;
-      rotationZone.style.cursor = 'grab';
-      return;
-    }
-
-    const deltaX = event.clientX - objectDrag.startX;
-    const deltaY = event.clientY - objectDrag.startY;
-
-    if (!objectDrag.axis) {
-      if (Math.hypot(deltaX, deltaY) < OBJECT_DRAG_LOCK_PX) return;
-
-      const originWorld = obj.group.getWorldPosition(new THREE.Vector3());
-      const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(cubeGroup.quaternion);
-      const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(cubeGroup.quaternion);
-
-      const originScreen = worldToScreen(originWorld);
-      const xScreen = worldToScreen(originWorld.clone().add(localX));
-      const zScreen = worldToScreen(originWorld.clone().add(localZ));
-
-      const dirCol = { x: xScreen.x - originScreen.x, y: xScreen.y - originScreen.y };
-      const dirRow = { x: zScreen.x - originScreen.x, y: zScreen.y - originScreen.y };
-
-      const normalize = (v) => {
-        const len = Math.hypot(v.x, v.y) || 1;
-        return { x: v.x / len, y: v.y / len };
-      };
-      const nCol = normalize(dirCol);
-      const nRow = normalize(dirRow);
-      const nDrag = normalize({ x: deltaX, y: deltaY });
-
-      const dotCol = nDrag.x * nCol.x + nDrag.y * nCol.y;
-      const dotRow = nDrag.x * nRow.x + nDrag.y * nRow.y;
-
-      if (Math.abs(dotCol) >= Math.abs(dotRow)) {
-        objectDrag.axis = 'col';
-        objectDrag.sign = dotCol >= 0 ? 1 : -1;
-      } else {
-        objectDrag.axis = 'row';
-        objectDrag.sign = dotRow >= 0 ? 1 : -1;
-      }
-    }
-
-    if (!objectDrag.applied && Math.hypot(deltaX, deltaY) >= OBJECT_DRAG_MOVE_PX) {
-      const dCol = objectDrag.axis === 'col' ? objectDrag.sign : 0;
-      const dRow = objectDrag.axis === 'row' ? objectDrag.sign : 0;
-      tryMoveFallingObject(obj, dCol, dRow);
-      objectDrag.applied = true;
-    }
-  });
-
-  const stopObjectDrag = () => {
-    objectDrag = null;
-    rotationZone.style.cursor = 'grab';
-  };
-  rotationZone.addEventListener('pointerup', stopObjectDrag);
-  rotationZone.addEventListener('pointercancel', stopObjectDrag);
-  rotationZone.addEventListener('pointerleave', stopObjectDrag);
+  moveLeftBtn.addEventListener('pointerdown', () => handleMoveTap({ x: -1, y: 0 }));
+  moveRightBtn.addEventListener('pointerdown', () => handleMoveTap({ x: 1, y: 0 }));
+  moveUpBtn.addEventListener('pointerdown', () => handleMoveTap({ x: 0, y: -1 }));
+  moveDownBtn.addEventListener('pointerdown', () => handleMoveTap({ x: 0, y: 1 }));
 
   // ========== ROTATE-OBJECT DRAG (rotate zone: swipe to spin the piece) ==========
   const ROTATE_DRAG_LOCK_PX = 12;
@@ -630,11 +628,12 @@ try {
   rotateObjectZone.addEventListener('pointerleave', stopRotateDrag);
   rotateObjectZone.style.cursor = 'grab';
 
-  // ========== CUBE ROTATION (swipe anywhere on canvas, 90° snaps) ==========
+  // ========== CUBE ROTATION (swipe anywhere on canvas, animated 90° snaps) ==========
   const CUBE_ROTATE_LOCK_PX = 12;
   const CUBE_ROTATE_MOVE_PX = 55;
 
   let cubeDrag = null;
+  let cubeRotationAnim = null; // { startRotY, targetRotY, startTime }
 
   canvas.addEventListener('pointerdown', (event) => {
     cubeDrag = {
@@ -659,7 +658,12 @@ try {
 
     if (Math.abs(deltaX) >= CUBE_ROTATE_MOVE_PX) {
       const dir = deltaX >= 0 ? 1 : -1;
-      cubeGroup.rotation.y += dir * (Math.PI / 2);
+      const startRotY = cubeGroup.rotation.y;
+      cubeRotationAnim = {
+        startRotY,
+        targetRotY: startRotY + dir * (Math.PI / 2),
+        startTime: performance.now()
+      };
       cubeDrag.applied = true;
     }
   });
@@ -676,22 +680,16 @@ try {
   function animate() {
     requestAnimationFrame(animate);
 
-    // Keep the move-zone icon's arrows aligned with the actual on-screen
-    // column direction, derived the same way the drag handler computes it.
-    if (moveArrowsGroup) {
-      const obj = fallingObjects.find(o => !o.landed);
-      if (obj) {
-        const originWorld = obj.group.getWorldPosition(new THREE.Vector3());
-        const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(cubeGroup.quaternion);
+    if (cubeRotationAnim) {
+      const elapsed = performance.now() - cubeRotationAnim.startTime;
+      const t = Math.min(elapsed / CUBE_ROTATE_DURATION_MS, 1);
+      const eased = easeOutCubic(t);
+      cubeGroup.rotation.y = cubeRotationAnim.startRotY +
+        (cubeRotationAnim.targetRotY - cubeRotationAnim.startRotY) * eased;
 
-        const originScreen = worldToScreen(originWorld);
-        const xScreen = worldToScreen(originWorld.clone().add(localX));
-
-        const screenAngle = Math.atan2(
-          xScreen.y - originScreen.y,
-          xScreen.x - originScreen.x
-        );
-        moveArrowsGroup.style.transform = `rotate(${screenAngle}rad)`;
+      if (t >= 1) {
+        cubeGroup.rotation.y = cubeRotationAnim.targetRotY;
+        cubeRotationAnim = null;
       }
     }
 

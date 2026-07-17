@@ -73,40 +73,26 @@ function computeShapeProps(shape) {
   };
 }
 
-function getBottomCornerOffsets(group) {
-  const box = new THREE.Box3();
-  let hasGeometry = false;
-
-  group.traverse(child => {
-    if (child.isMesh && child.geometry) {
-      child.updateMatrixWorld();
-      if (!child.geometry.boundingBox) {
-        child.geometry.computeBoundingBox();
-      }
-      const childBox = child.geometry.boundingBox.clone();
-      childBox.applyMatrix4(child.matrixWorld);
-      box.expandByPoint(childBox.min);
-      box.expandByPoint(childBox.max);
-      hasGeometry = true;
-    }
-  });
-
-  if (!hasGeometry) {
-    return [
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(0, 0, 0)
-    ];
-  }
-
-  const bottomY = box.min.y;
+// Computes the 4 bottom-face corner offsets (relative to the group's own
+// local origin) for a shape, based on its current shapeProps. Since
+// unitCubeGeometry cubes are centered at each cube's local integer position,
+// the shape's local bounds run from -0.5 to (width - 0.5) on X/Z and bottom
+// out at -0.5 on Y. This is purely local-space, so it's unaffected by the
+// big cube's rotation or the group's world position — no double-transform.
+function computeLocalBottomCorners(shapeProps) {
+  const width = shapeProps.maxX - shapeProps.minX + 1;
+  const depth = shapeProps.maxZ - shapeProps.minZ + 1;
+  const minX = -0.5;
+  const maxX = width - 0.5;
+  const minZ = -0.5;
+  const maxZ = depth - 0.5;
+  const bottomY = -0.5;
   return [
-    new THREE.Vector3(box.min.x, bottomY, box.min.z),
-    new THREE.Vector3(box.max.x, bottomY, box.min.z),
-    new THREE.Vector3(box.max.x, bottomY, box.max.z),
-    new THREE.Vector3(box.min.x, bottomY, box.max.z)
-  ].map(corner => corner.clone());
+    new THREE.Vector3(minX, bottomY, minZ),
+    new THREE.Vector3(maxX, bottomY, minZ),
+    new THREE.Vector3(maxX, bottomY, maxZ),
+    new THREE.Vector3(minX, bottomY, maxZ)
+  ];
 }
 
 try {
@@ -231,10 +217,10 @@ try {
   unitCubeGeometry.computeBoundingBox();
 
   // Updates each path line to run from the shape's current bottom corners
-  // down to its landing height.
+  // (recomputed fresh from shapeProps each call, so rotation is reflected
+  // immediately) down to its landing height.
   function updatePathLines(obj, worldTargetY) {
-    obj.group.updateMatrixWorld(true);
-    const bottomCornerOffsets = getBottomCornerOffsets(obj.group);
+    const bottomCornerOffsets = computeLocalBottomCorners(obj.shapeProps);
     obj.pathLines.forEach(({ line }, index) => {
       const offset = bottomCornerOffsets[index] || bottomCornerOffsets[0];
       const start = new THREE.Vector3(
@@ -306,7 +292,7 @@ try {
     const gridBaseY = computeTargetYFor(gridCol, gridRow, shape, shapeProps);
     const worldTargetY = gridBaseY - cubeHalfSize + 0.5;
 
-    const bottomCornerOffsets = getBottomCornerOffsets(group);
+    const bottomCornerOffsets = computeLocalBottomCorners(shapeProps);
     const pathLines = bottomCornerOffsets.map((offset) => {
       const start = new THREE.Vector3(
         group.position.x + offset.x,
@@ -644,31 +630,47 @@ try {
   rotateObjectZone.addEventListener('pointerleave', stopRotateDrag);
   rotateObjectZone.style.cursor = 'grab';
 
-  // ========== CUBE ROTATION (swipe anywhere on canvas) ==========
-  let isDragging = false;
-  let lastX = 0;
+  // ========== CUBE ROTATION (swipe anywhere on canvas, 90° snaps) ==========
+  const CUBE_ROTATE_LOCK_PX = 12;
+  const CUBE_ROTATE_MOVE_PX = 55;
+
+  let cubeDrag = null;
 
   canvas.addEventListener('pointerdown', (event) => {
-    isDragging = true;
-    lastX = event.clientX;
+    cubeDrag = {
+      startX: event.clientX,
+      startY: event.clientY,
+      applied: false
+    };
     canvas.style.cursor = 'grabbing';
     canvas.setPointerCapture(event.pointerId);
   });
 
   canvas.addEventListener('pointermove', (event) => {
-    if (!isDragging) return;
-    const deltaX = event.clientX - lastX;
-    cubeGroup.rotation.y += deltaX * 0.01;
-    lastX = event.clientX;
+    if (!cubeDrag || cubeDrag.applied) return;
+
+    const deltaX = event.clientX - cubeDrag.startX;
+    const deltaY = event.clientY - cubeDrag.startY;
+
+    if (Math.hypot(deltaX, deltaY) < CUBE_ROTATE_LOCK_PX) return;
+
+    // Only horizontal swipes rotate the cube (left/right).
+    if (Math.abs(deltaX) < Math.abs(deltaY)) return;
+
+    if (Math.abs(deltaX) >= CUBE_ROTATE_MOVE_PX) {
+      const dir = deltaX >= 0 ? 1 : -1;
+      cubeGroup.rotation.y += dir * (Math.PI / 2);
+      cubeDrag.applied = true;
+    }
   });
 
-  const stopDragging = () => {
-    isDragging = false;
+  const stopCubeDrag = () => {
+    cubeDrag = null;
     canvas.style.cursor = 'grab';
   };
-  canvas.addEventListener('pointerup', stopDragging);
-  canvas.addEventListener('pointercancel', stopDragging);
-  canvas.addEventListener('pointerleave', stopDragging);
+  canvas.addEventListener('pointerup', stopCubeDrag);
+  canvas.addEventListener('pointercancel', stopCubeDrag);
+  canvas.addEventListener('pointerleave', stopCubeDrag);
   canvas.style.cursor = 'grab';
 
   function animate() {
@@ -746,4 +748,4 @@ try {
 } catch (err) {
   const errMsg = err && err.message ? err.message : String(err);
   setError(errMsg);
-}
+                                        }
